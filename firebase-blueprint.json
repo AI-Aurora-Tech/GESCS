@@ -1,0 +1,97 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User profile with roles and permissions.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "lojinha_manager", "cantina_manager", "scout_manager", "inventory_manager"] },
+        "photoURL": { "type": "string" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Product": {
+      "title": "Lojinha Product",
+      "description": "Materials and products offered in the store.",
+      "type": "object",
+      "properties": {
+        "barcode": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "price": { "type": "number" },
+        "stock": { "type": "number" },
+        "category": { "type": "string" }
+      },
+      "required": ["barcode", "name", "price", "stock"]
+    },
+    "StockTransaction": {
+      "title": "Stock Transaction",
+      "description": "Record of entry or exit of products.",
+      "type": "object",
+      "properties": {
+        "productId": { "type": "string" },
+        "type": { "type": "string", "enum": ["entry", "exit"] },
+        "quantity": { "type": "number" },
+        "date": { "type": "string", "format": "date-time" },
+        "userId": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["productId", "type", "quantity", "date", "userId"]
+    },
+    "FinancialRecord": {
+      "title": "Cantina Financial Record",
+      "description": "Income and expenses for the cantina.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "enum": ["income", "expense"] },
+        "amount": { "type": "number" },
+        "category": { "type": "string" },
+        "description": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "isExtraordinary": { "type": "boolean" },
+        "eventId": { "type": "string" }
+      },
+      "required": ["type", "amount", "date"]
+    },
+    "ScoutMember": {
+      "title": "Scout Member",
+      "description": "Data of active, inactive, and exempt members.",
+      "type": "object",
+      "properties": {
+        "paxtuId": { "type": "string" },
+        "name": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "inactive", "exempt"] },
+        "paymentStatus": { "type": "string", "enum": ["paid", "overdue", "exempt"] },
+        "email": { "type": "string", "format": "email" },
+        "lastUpdate": { "type": "string", "format": "date-time" }
+      },
+      "required": ["paxtuId", "name", "status"]
+    },
+    "Asset": {
+      "title": "GESCS Asset",
+      "description": "Inventory of assets and equipment.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "value": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "disposed", "pending_approval"] },
+        "justification": { "type": "string" },
+        "dateAcquired": { "type": "string", "format": "date-time" },
+        "dateDisposed": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "status"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": { "schema": "User", "description": "User profiles" },
+    "/products/{productId}": { "schema": "Product", "description": "Lojinha inventory" },
+    "/stock_transactions/{transactionId}": { "schema": "StockTransaction", "description": "Stock movements" },
+    "/financial_records/{recordId}": { "schema": "FinancialRecord", "description": "Cantina finances" },
+    "/scout_members/{memberId}": { "schema": "ScoutMember", "description": "Scout membership data" },
+    "/assets/{assetId}": { "schema": "Asset", "description": "GESCS assets inventory" }
+  }
+}
