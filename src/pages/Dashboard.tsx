@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   TrendingUp, 
   Users, 
@@ -13,21 +13,70 @@ import {
   YAxis, 
   CartesianGrid, 
   Tooltip, 
-  ResponsiveContainer,
-  LineChart,
-  Line
+  ResponsiveContainer
 } from 'recharts';
-
-const data = [
-  { name: 'Jan', sales: 4000, expenses: 2400 },
-  { name: 'Fev', sales: 3000, expenses: 1398 },
-  { name: 'Mar', sales: 2000, expenses: 9800 },
-  { name: 'Abr', sales: 2780, expenses: 3908 },
-  { name: 'Mai', sales: 1890, expenses: 4800 },
-  { name: 'Jun', sales: 2390, expenses: 3800 },
-];
+import { supabase } from '../supabase';
+import { cn } from '../lib/utils';
 
 const Dashboard: React.FC = () => {
+  const [stats, setStats] = useState({
+    lojinhaSales: 0,
+    cantinaBalance: 0,
+    activeScouts: 0,
+    totalAssets: 0
+  });
+
+  useEffect(() => {
+    fetchStats();
+  }, []);
+
+  const fetchStats = async () => {
+    try {
+      // Lojinha Sales (sum of stock_transactions where type is 'out')
+      const { data: lojinhaData } = await supabase
+        .from('stock_transactions')
+        .select('quantity, products(price)')
+        .eq('type', 'out');
+      
+      const lojinhaTotal = lojinhaData?.reduce((acc, curr: any) => acc + (curr.quantity * (curr.products?.price || 0)), 0) || 0;
+
+      // Cantina Balance
+      const { data: cantinaData } = await supabase
+        .from('financial_records')
+        .select('type, amount');
+      
+      const cantinaBalance = cantinaData?.reduce((acc, curr) => {
+        return curr.type === 'income' ? acc + curr.amount : acc - curr.amount;
+      }, 0) || 0;
+
+      // Active Scouts
+      const { count: scoutsCount } = await supabase
+        .from('scout_members')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'active');
+
+      // Total Assets
+      const { count: assetsCount } = await supabase
+        .from('assets')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'active');
+
+      setStats({
+        lojinhaSales: lojinhaTotal,
+        cantinaBalance: cantinaBalance,
+        activeScouts: scoutsCount || 0,
+        totalAssets: assetsCount || 0
+      });
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const chartData = [
+    { name: 'Lojinha', value: stats.lojinhaSales },
+    { name: 'Cantina', value: stats.cantinaBalance },
+  ];
+
   return (
     <div className="space-y-8">
       <header>
@@ -38,17 +87,16 @@ const Dashboard: React.FC = () => {
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {[
-          { label: 'Vendas Lojinha', value: 'R$ 4.250', icon: Store, color: 'text-blue-600', bg: 'bg-blue-100' },
-          { label: 'Saldo Cantina', value: 'R$ 1.120', icon: TrendingUp, color: 'text-green-600', bg: 'bg-green-100' },
-          { label: 'Escoteiros Ativos', value: '142', icon: Users, color: 'text-purple-600', bg: 'bg-purple-100' },
-          { label: 'Ativos Patrimônio', value: '85', icon: Package, color: 'text-orange-600', bg: 'bg-orange-100' },
+          { label: 'Vendas Lojinha', value: `R$ ${stats.lojinhaSales.toFixed(2)}`, icon: Store, color: 'text-blue-600', bg: 'bg-blue-100' },
+          { label: 'Saldo Cantina', value: `R$ ${stats.cantinaBalance.toFixed(2)}`, icon: TrendingUp, color: 'text-green-600', bg: 'bg-green-100' },
+          { label: 'Escoteiros Ativos', value: stats.activeScouts.toString(), icon: Users, color: 'text-purple-600', bg: 'bg-purple-100' },
+          { label: 'Ativos Patrimônio', value: stats.totalAssets.toString(), icon: Package, color: 'text-orange-600', bg: 'bg-orange-100' },
         ].map((stat) => (
           <div key={stat.label} className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
             <div className="flex items-center justify-between mb-4">
               <div className={cn("p-2 rounded-lg", stat.bg)}>
                 <stat.icon size={24} className={stat.color} />
               </div>
-              <span className="text-xs font-medium text-green-600 bg-green-50 px-2 py-1 rounded-full">+12%</span>
             </div>
             <p className="text-sm text-gray-500 font-medium">{stat.label}</p>
             <p className="text-2xl font-bold text-gray-900">{stat.value}</p>
@@ -59,16 +107,15 @@ const Dashboard: React.FC = () => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Sales Chart */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-          <h3 className="text-lg font-bold mb-6">Fluxo Financeiro (Lojinha + Cantina)</h3>
+          <h3 className="text-lg font-bold mb-6">Fluxo Financeiro Atual</h3>
           <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={data}>
+              <BarChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
                 <XAxis dataKey="name" />
                 <YAxis />
                 <Tooltip />
-                <Bar dataKey="sales" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="expenses" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="value" fill="#3b82f6" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -103,5 +150,4 @@ const Dashboard: React.FC = () => {
   );
 };
 
-import { cn } from '../lib/utils';
 export default Dashboard;

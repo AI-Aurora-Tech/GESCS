@@ -8,12 +8,16 @@ import Scouts from './pages/Scouts';
 import Inventory from './pages/Inventory';
 import Dashboard from './pages/Dashboard';
 import Login from './pages/Login';
+import Users from './pages/Users';
+
+import ForcePasswordChange from './components/ForcePasswordChange';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, loading } = useAuth();
+  const { user, profile, loading } = useAuth();
   
   if (loading) return <div className="flex items-center justify-center h-screen">Carregando...</div>;
   if (!user) return <Navigate to="/login" />;
+  if (profile?.requires_password_change) return <ForcePasswordChange />;
   
   return <>{children}</>;
 };
@@ -34,6 +38,7 @@ const App: React.FC = () => {
             <Route path="cantina" element={<Cantina />} />
             <Route path="scouts" element={<Scouts />} />
             <Route path="inventory" element={<Inventory />} />
+            <Route path="users" element={<Users />} />
           </Route>
         </Routes>
       </Router>

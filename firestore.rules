@@ -43,50 +43,75 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() && 
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-         (request.auth.token.email == "ai.auroratech@gmail.com" && request.auth.token.email_verified == true));
+        (request.auth.token.email == "ai.auroratech@gmail.com" ||
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin');
     }
 
     function hasRole(role) {
-      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == role;
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == role || isAdmin());
     }
 
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'role']) &&
+             data.uid is string &&
+             data.email is string && data.email.size() > 0 &&
+             data.displayName is string &&
+             data.role in ['admin', 'lojinha_manager', 'cantina_manager', 'scout_manager', 'inventory_manager'];
+    }
+
     // User Rules
     match /users/{uid} {
       allow read: if isAuthenticated();
-      allow create, update: if isAdmin() || isOwner(uid);
+      allow create: if isAuthenticated() && (isOwner(uid) || isAdmin()) && isValidUser(request.resource.data);
+      allow update: if isAuthenticated() && (isAdmin() || (isOwner(uid) && isValidUser(request.resource.data) && request.resource.data.role == resource.data.role));
+      allow delete: if isAdmin();
     }
 
     // Lojinha Rules
     match /products/{productId} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin() || hasRole('lojinha_manager');
+      allow write: if hasRole('lojinha_manager');
     }
     match /stock_transactions/{transactionId} {
       allow read: if isAuthenticated();
-      allow create: if isAdmin() || hasRole('lojinha_manager');
+      allow create: if hasRole('lojinha_manager');
+    }
+    match /lojinha_demands/{demandId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if hasRole('lojinha_manager');
     }
 
     // Cantina Rules
     match /financial_records/{recordId} {
-      allow read: if isAdmin() || hasRole('cantina_manager');
-      allow write: if isAdmin() || hasRole('cantina_manager');
+      allow read: if hasRole('cantina_manager');
+      allow write: if hasRole('cantina_manager');
+    }
+    match /cantina_materials/{materialId} {
+      allow read: if isAuthenticated();
+      allow write: if hasRole('cantina_manager');
     }
 
     // Scout Rules
     match /scout_members/{memberId} {
-      allow read: if isAdmin() || hasRole('scout_manager');
-      allow write: if isAdmin() || hasRole('scout_manager');
+      allow read: if hasRole('scout_manager');
+      allow write: if hasRole('scout_manager');
     }
 
     // Asset Rules
     match /assets/{assetId} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin() || hasRole('inventory_manager');
+      allow write: if hasRole('inventory_manager');
+    }
+    match /inventory_demands/{demandId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if hasRole('inventory_manager');
     }
   }
 }

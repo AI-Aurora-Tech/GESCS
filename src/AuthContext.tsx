@@ -1,75 +1,103 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { 
-  onAuthStateChanged, 
-  signInWithPopup, 
-  GoogleAuthProvider, 
-  signOut, 
-  User as FirebaseUser 
-} from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { auth, db } from './firebase';
+import { supabase } from './supabase';
+import { User } from '@supabase/supabase-js';
 
 interface UserProfile {
-  uid: string;
+  id: string;
   email: string;
-  displayName: string;
-  role: 'admin' | 'lojinha_manager' | 'cantina_manager' | 'scout_manager' | 'inventory_manager';
-  photoURL?: string;
+  display_name: string;
+  role: 'admin_geral' | 'admin_cantina' | 'user_cantina' | 'admin_lojinha' | 'user_lojinha' | 'admin_ativos' | 'user_ativos' | 'admin_financeiro' | 'user_financeiro';
+  photo_url?: string;
+  requires_password_change?: boolean;
 }
 
 interface AuthContextType {
-  user: FirebaseUser | null;
+  user: User | null;
   profile: UserProfile | null;
   loading: boolean;
-  login: () => Promise<void>;
+  login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setUser(user);
-      if (user) {
-        const docRef = doc(db, 'users', user.uid);
-        const docSnap = await getDoc(docRef);
-        
-        if (docSnap.exists()) {
-          setProfile(docSnap.data() as UserProfile);
-        } else {
-          // Default role for new users (or check if it's the admin email)
-          const isAdmin = user.email === 'ai.auroratech@gmail.com';
-          const newProfile: UserProfile = {
-            uid: user.uid,
-            email: user.email || '',
-            displayName: user.displayName || '',
-            role: isAdmin ? 'admin' : 'lojinha_manager', // Defaulting for demo purposes
-            photoURL: user.photoURL || undefined,
-          };
-          await setDoc(docRef, newProfile);
-          setProfile(newProfile);
-        }
+    // Check active sessions and subscribe to auth changes
+    const fetchSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      setUser(session?.user ?? null);
+      if (session?.user) {
+        await fetchProfile(session.user.id, session.user.email || '');
+      }
+      setLoading(false);
+    };
+
+    fetchSession();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      setUser(session?.user ?? null);
+      if (session?.user) {
+        await fetchProfile(session.user.id, session.user.email || '');
       } else {
         setProfile(null);
       }
       setLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => subscription.unsubscribe();
   }, []);
 
-  const login = async () => {
-    const provider = new GoogleAuthProvider();
-    await signInWithPopup(auth, provider);
+  const fetchProfile = async (id: string, email: string) => {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (error || !data) {
+      // Create profile if it doesn't exist
+      const isAdmin = email === 'ai.auroratech@gmail.com';
+      const newProfile = {
+        id: id,
+        email: email,
+        display_name: email.split('@')[0] || 'Usuário',
+        role: isAdmin ? 'admin_geral' : 'user_lojinha',
+        requires_password_change: false
+      };
+
+      const { data: createdData, error: createError } = await supabase
+        .from('profiles')
+        .upsert([newProfile])
+        .select()
+        .single();
+
+      if (createError) {
+        console.error('Error creating profile:', createError);
+      }
+
+      if (createdData) {
+        setProfile(createdData as UserProfile);
+      }
+    } else {
+      setProfile(data as UserProfile);
+    }
+  };
+
+  const login = async (email: string, password: string) => {
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+    if (error) throw error;
   };
 
   const logout = async () => {
-    await signOut(auth);
+    await supabase.auth.signOut();
   };
 
   return (

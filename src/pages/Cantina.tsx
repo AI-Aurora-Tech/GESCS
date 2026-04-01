@@ -12,11 +12,11 @@ import {
   Settings,
   CreditCard
 } from 'lucide-react';
-import { collection, query, onSnapshot, addDoc, serverTimestamp, orderBy } from 'firebase/firestore';
-import { db } from '../firebase';
+import { supabase } from '../supabase';
 import { cn } from '../lib/utils';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { useAuth } from '../AuthContext';
 
 interface FinancialRecord {
   id: string;
@@ -24,11 +24,12 @@ interface FinancialRecord {
   amount: number;
   category: string;
   description: string;
-  date: any;
-  isExtraordinary: boolean;
+  date: string;
+  is_extraordinary: boolean;
 }
 
 const Cantina: React.FC = () => {
+  const { user, profile, loading: authLoading } = useAuth();
   const [activeTab, setActiveTab] = useState<'financeiro' | 'eventos' | 'movimentacao' | 'pagvendas' | 'materiais' | 'relatorios' | 'configuracoes'>('financeiro');
   const [records, setRecords] = useState<FinancialRecord[]>([]);
   const [materials, setMaterials] = useState<any[]>([]);
@@ -39,7 +40,7 @@ const Cantina: React.FC = () => {
     amount: 0,
     category: 'Venda Direta',
     description: '',
-    isExtraordinary: false
+    is_extraordinary: false
   });
 
   const [newMaterial, setNewMaterial] = useState({
@@ -50,33 +51,56 @@ const Cantina: React.FC = () => {
   });
 
   useEffect(() => {
-    const q = query(collection(db, 'financial_records'), orderBy('date', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const recs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FinancialRecord));
-      setRecords(recs);
-    });
+    if (!user || authLoading) return;
 
-    const qMaterials = query(collection(db, 'cantina_materials'));
-    const unsubscribeMaterials = onSnapshot(qMaterials, (snapshot) => {
-      const mats = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setMaterials(mats);
-    });
+    fetchRecords();
+    fetchMaterials();
+
+    const recordsSubscription = supabase
+      .channel('records_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'financial_records' }, () => fetchRecords())
+      .subscribe();
+
+    const materialsSubscription = supabase
+      .channel('materials_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'cantina_materials' }, () => fetchMaterials())
+      .subscribe();
 
     return () => {
-      unsubscribe();
-      unsubscribeMaterials();
+      supabase.removeChannel(recordsSubscription);
+      supabase.removeChannel(materialsSubscription);
     };
-  }, []);
+  }, [user, authLoading]);
+
+  const fetchRecords = async () => {
+    const { data, error } = await supabase
+      .from('financial_records')
+      .select('*')
+      .order('date', { ascending: false });
+    
+    if (data) setRecords(data);
+    if (error) console.error(error);
+  };
+
+  const fetchMaterials = async () => {
+    const { data, error } = await supabase
+      .from('cantina_materials')
+      .select('*')
+      .order('name', { ascending: true });
+    
+    if (data) setMaterials(data);
+    if (error) console.error(error);
+  };
 
   const handleAddRecord = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await addDoc(collection(db, 'financial_records'), {
-        ...newRecord,
-        date: serverTimestamp()
-      });
+      const { error } = await supabase.from('financial_records').insert([newRecord]);
+      if (error) throw error;
+      
       setIsModalOpen(false);
-      setNewRecord({ type: 'income', amount: 0, category: 'Venda Direta', description: '', isExtraordinary: false });
+      setNewRecord({ type: 'income', amount: 0, category: 'Venda Direta', description: '', is_extraordinary: false });
+      fetchRecords();
     } catch (err) {
       console.error(err);
     }
@@ -85,12 +109,12 @@ const Cantina: React.FC = () => {
   const handleAddMaterial = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await addDoc(collection(db, 'cantina_materials'), {
-        ...newMaterial,
-        createdAt: serverTimestamp()
-      });
+      const { error } = await supabase.from('cantina_materials').insert([newMaterial]);
+      if (error) throw error;
+      
       setIsMaterialModalOpen(false);
       setNewMaterial({ name: '', category: 'Salgados', price: 0, stock: 0 });
+      fetchMaterials();
     } catch (err) {
       console.error(err);
     }
@@ -100,7 +124,10 @@ const Cantina: React.FC = () => {
   const totalExpense = records.filter(r => r.type === 'expense').reduce((acc, r) => acc + r.amount, 0);
   const balance = totalIncome - totalExpense;
 
-  const tabs = [
+  const isUserCantina = profile?.role === 'user_cantina';
+  const isUserFinanceiro = profile?.role === 'user_financeiro';
+
+  const allTabs = [
     { id: 'financeiro', label: 'Financeiro', icon: DollarSign },
     { id: 'eventos', label: 'Eventos', icon: Calendar },
     { id: 'movimentacao', label: 'Movimentação', icon: History },
@@ -109,6 +136,10 @@ const Cantina: React.FC = () => {
     { id: 'relatorios', label: 'Relatórios', icon: FileText },
     { id: 'configuracoes', label: 'Acesso', icon: Settings },
   ];
+
+  const tabs = (isUserCantina || isUserFinanceiro)
+    ? allTabs.filter(t => !['materiais', 'relatorios', 'configuracoes'].includes(t.id))
+    : allTabs;
 
   return (
     <div className="space-y-8">
@@ -203,12 +234,12 @@ const Cantina: React.FC = () => {
                   {records.map((record) => (
                     <tr key={record.id} className="hover:bg-gray-50 transition-colors">
                       <td className="px-6 py-4 text-sm text-gray-500">
-                        {record.date?.toDate ? format(record.date.toDate(), 'dd/MM/yyyy HH:mm', { locale: ptBR }) : 'Pendente'}
+                        {record.date ? format(new Date(record.date), 'dd/MM/yyyy HH:mm', { locale: ptBR }) : 'Pendente'}
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex items-center">
                           <p className="font-medium text-gray-900">{record.description}</p>
-                          {record.isExtraordinary && (
+                          {record.is_extraordinary && (
                             <span className="ml-2 px-2 py-0.5 bg-purple-100 text-purple-600 text-[10px] font-bold uppercase rounded-full">
                               Extraordinário
                             </span>
@@ -243,7 +274,7 @@ const Cantina: React.FC = () => {
               <p className="text-sm text-gray-500">Registre eventos que geram movimentação financeira atípica (ex: Acampamentos, Festas Beneficentes).</p>
               <button 
                 onClick={() => {
-                  setNewRecord({...newRecord, isExtraordinary: true, category: 'Evento Especial'});
+                  setNewRecord({...newRecord, is_extraordinary: true, category: 'Evento Especial'});
                   setIsModalOpen(true);
                 }}
                 className="w-full py-3 bg-purple-600 text-white rounded-lg font-bold hover:bg-purple-700 transition-all"
@@ -281,7 +312,7 @@ const Cantina: React.FC = () => {
                 {records.map((r) => (
                   <tr key={r.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 text-sm text-gray-500">
-                      {r.date?.toDate ? format(r.date.toDate(), 'dd/MM/yyyy HH:mm') : 'Pendente'}
+                      {r.date ? format(new Date(r.date), 'dd/MM/yyyy HH:mm') : 'Pendente'}
                     </td>
                     <td className="px-6 py-4 font-medium text-gray-900">
                       {r.description}
@@ -482,8 +513,8 @@ const Cantina: React.FC = () => {
                   type="checkbox"
                   id="extraordinary"
                   className="w-4 h-4 text-blue-600 rounded"
-                  checked={newRecord.isExtraordinary}
-                  onChange={(e) => setNewRecord({...newRecord, isExtraordinary: e.target.checked})}
+                  checked={newRecord.is_extraordinary}
+                  onChange={(e) => setNewRecord({...newRecord, is_extraordinary: e.target.checked})}
                 />
                 <label htmlFor="extraordinary" className="text-sm text-gray-600">Evento Extraordinário</label>
               </div>

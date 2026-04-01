@@ -14,8 +14,7 @@ import {
   TrendingUp,
   Settings
 } from 'lucide-react';
-import { collection, query, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, orderBy } from 'firebase/firestore';
-import { db } from '../firebase';
+import { supabase } from '../supabase';
 import { useAuth } from '../AuthContext';
 import Barcode from 'react-barcode';
 import { cn } from '../lib/utils';
@@ -31,8 +30,8 @@ interface Product {
 }
 
 const Lojinha: React.FC = () => {
-  const { profile } = useAuth();
-  const [activeTab, setActiveTab] = useState<'estoque' | 'cadastros' | 'movimentacao' | 'pagvendas' | 'relatorios' | 'demandas' | 'configuracoes'>('estoque');
+  const { profile, user, loading: authLoading } = useAuth();
+  const [activeTab, setActiveTab] = useState<'estoque' | 'cadastros' | 'movimentacao' | 'pagvendas' | 'relatorios' | 'demandas' | 'configuracoes' | 'conferencia'>('estoque');
   const [products, setProducts] = useState<Product[]>([]);
   const [transactions, setTransactions] = useState<any[]>([]);
   const [demands, setDemands] = useState<any[]>([]);
@@ -43,6 +42,8 @@ const Lojinha: React.FC = () => {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [stockAction, setStockAction] = useState<'entry' | 'exit'>('entry');
   const [quantity, setQuantity] = useState(1);
+  const [scannedItems, setScannedItems] = useState<Record<string, number>>({});
+  const [scanInput, setScanInput] = useState('');
 
   // New Product Form
   const [newProduct, setNewProduct] = useState({
@@ -62,41 +63,60 @@ const Lojinha: React.FC = () => {
   });
 
   useEffect(() => {
-    const q = query(collection(db, 'products'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const prods = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
-      setProducts(prods);
-    });
+    if (!user || authLoading) return;
 
-    const qTrans = query(collection(db, 'stock_transactions'), orderBy('date', 'desc'));
-    const unsubscribeTrans = onSnapshot(qTrans, (snapshot) => {
-      const trans = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setTransactions(trans);
-    });
+    fetchData();
 
-    const qDemands = query(collection(db, 'lojinha_demands'), orderBy('createdAt', 'desc'));
-    const unsubscribeDemands = onSnapshot(qDemands, (snapshot) => {
-      const dems = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setDemands(dems);
-    });
+    // Set up real-time subscriptions
+    const productsSubscription = supabase
+      .channel('products_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => fetchData())
+      .subscribe();
+
+    const transactionsSubscription = supabase
+      .channel('transactions_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'stock_transactions' }, () => fetchData())
+      .subscribe();
+
+    const demandsSubscription = supabase
+      .channel('demands_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'lojinha_demands' }, () => fetchData())
+      .subscribe();
 
     return () => {
-      unsubscribe();
-      unsubscribeTrans();
-      unsubscribeDemands();
+      supabase.removeChannel(productsSubscription);
+      supabase.removeChannel(transactionsSubscription);
+      supabase.removeChannel(demandsSubscription);
     };
-  }, []);
+  }, [user, authLoading]);
+
+  const fetchData = async () => {
+    const { data: prods } = await supabase.from('products').select('*').order('name');
+    if (prods) setProducts(prods);
+
+    const { data: trans } = await supabase
+      .from('stock_transactions')
+      .select('*, products(name)')
+      .order('created_at', { ascending: false });
+    if (trans) setTransactions(trans);
+
+    const { data: dems } = await supabase
+      .from('lojinha_demands')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (dems) setDemands(dems);
+  };
 
   const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await addDoc(collection(db, 'products'), {
-        ...newProduct,
-        createdAt: serverTimestamp()
-      });
+      const { error } = await supabase.from('products').insert([newProduct]);
+      if (error) throw error;
+      
       setIsAddModalOpen(false);
       setNewProduct({ name: '', barcode: '', price: 0, stock: 0, category: 'Uniforme' });
       setActiveTab('estoque');
+      fetchData();
     } catch (err) {
       console.error(err);
     }
@@ -105,14 +125,16 @@ const Lojinha: React.FC = () => {
   const handleAddDemand = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await addDoc(collection(db, 'lojinha_demands'), {
+      const { error } = await supabase.from('lojinha_demands').insert([{
         ...newDemand,
-        createdAt: serverTimestamp(),
-        userId: profile?.uid,
-        userName: profile?.name
-      });
+        user_id: profile?.id,
+        user_name: profile?.display_name
+      }]);
+      if (error) throw error;
+
       setIsDemandModalOpen(false);
       setNewDemand({ title: '', description: '', priority: 'Média', status: 'Pendente' });
+      fetchData();
     } catch (err) {
       console.error(err);
     }
@@ -127,20 +149,47 @@ const Lojinha: React.FC = () => {
       : selectedProduct.stock - quantity;
 
     try {
-      await updateDoc(doc(db, 'products', selectedProduct.id), { stock: newStock });
-      await addDoc(collection(db, 'stock_transactions'), {
-        productId: selectedProduct.id,
-        type: stockAction,
-        quantity,
-        date: serverTimestamp(),
-        userId: profile?.uid,
-        notes: `Ajuste manual de estoque (${stockAction})`
-      });
+      const { error: updateError } = await supabase
+        .from('products')
+        .update({ stock: newStock })
+        .eq('id', selectedProduct.id);
+      
+      if (updateError) throw updateError;
+
+      const { error: transError } = await supabase
+        .from('stock_transactions')
+        .insert([{
+          product_id: selectedProduct.id,
+          type: stockAction,
+          quantity,
+          user_id: profile?.id,
+          notes: `Ajuste manual de estoque (${stockAction})`
+        }]);
+      
+      if (transError) throw transError;
+
       setIsStockModalOpen(false);
       setQuantity(1);
+      fetchData();
     } catch (err) {
       console.error(err);
     }
+  };
+
+  const handleScan = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!scanInput) return;
+    
+    const product = products.find(p => p.barcode === scanInput);
+    if (product) {
+      setScannedItems(prev => ({
+        ...prev,
+        [product.barcode]: (prev[product.barcode] || 0) + 1
+      }));
+    } else {
+      alert('Produto não encontrado!');
+    }
+    setScanInput('');
   };
 
   const filteredProducts = products.filter(p => 
@@ -148,8 +197,11 @@ const Lojinha: React.FC = () => {
     p.barcode.includes(searchTerm)
   );
 
-  const tabs = [
+  const isUserLojinha = profile?.role === 'user_lojinha';
+
+  const allTabs = [
     { id: 'estoque', label: 'Estoque', icon: Package },
+    { id: 'conferencia', label: 'Conferência', icon: BarcodeIcon },
     { id: 'cadastros', label: 'Cadastros', icon: Plus },
     { id: 'movimentacao', label: 'Movimentação', icon: History },
     { id: 'pagvendas', label: 'PagVendas', icon: CreditCard },
@@ -158,9 +210,41 @@ const Lojinha: React.FC = () => {
     { id: 'configuracoes', label: 'Acesso', icon: Settings },
   ];
 
+  const tabs = isUserLojinha 
+    ? allTabs.filter(t => !['cadastros', 'relatorios', 'configuracoes'].includes(t.id))
+    : allTabs;
+
+  const isSaturday = new Date().getDay() === 6;
+  // Simple logic: show alert every other Saturday (even weeks)
+  const isStockCheckWeek = Math.floor(new Date().getDate() / 7) % 2 === 0;
+  const showStockCheckAlert = isSaturday && isStockCheckWeek;
+
   return (
-    <div className="space-y-6">
-      <header className="flex justify-between items-center">
+    <>
+      <div className="hidden print:block p-8">
+        <h1 className="text-2xl font-bold mb-8 text-center">Etiquetas de Produtos - Lojinha</h1>
+        <div className="grid grid-cols-3 gap-8">
+          {filteredProducts.map(product => (
+            <div key={product.id} className="flex flex-col items-center justify-center p-4 border border-dashed border-gray-400 rounded-lg">
+              <span className="font-bold text-sm mb-2 text-center">{product.name}</span>
+              <Barcode value={product.barcode} height={40} width={1.5} fontSize={12} />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-6 print:hidden">
+        {showStockCheckAlert && (
+          <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl flex items-center text-blue-800">
+            <BarcodeIcon className="w-6 h-6 mr-3 text-blue-600" />
+            <div>
+              <h3 className="font-bold">Lembrete de Conferência de Estoque</h3>
+              <p className="text-sm text-blue-600">Hoje é sábado de conferência! Acesse a aba "Conferência" para realizar o balanço quinzenal.</p>
+            </div>
+          </div>
+        )}
+
+        <header className="flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">1. Sistema de Lojinha</h1>
           <p className="text-gray-500">Gestão completa de estoque e vendas.</p>
@@ -200,6 +284,13 @@ const Lojinha: React.FC = () => {
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
             </div>
+            <button
+              onClick={() => window.print()}
+              className="flex items-center px-4 py-2 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg font-medium transition-colors"
+            >
+              <BarcodeIcon size={18} className="mr-2" />
+              Imprimir Etiquetas
+            </button>
           </div>
 
           {/* Product Table */}
@@ -267,6 +358,95 @@ const Lojinha: React.FC = () => {
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'conferencia' && (
+        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+            <h2 className="text-xl font-bold mb-4">Conferência de Estoque (Balanço)</h2>
+            <p className="text-gray-500 mb-6">
+              Escaneie os códigos de barras dos produtos físicos. O sistema comparará com o estoque atual.
+            </p>
+            
+            <form onSubmit={handleScan} className="flex gap-4 mb-8">
+              <div className="relative flex-1">
+                <BarcodeIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                <input 
+                  type="text"
+                  autoFocus
+                  placeholder="Escaneie o código de barras aqui..."
+                  className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-lg font-medium"
+                  value={scanInput}
+                  onChange={(e) => setScanInput(e.target.value)}
+                />
+              </div>
+              <button
+                type="submit"
+                className="px-6 py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition-colors"
+              >
+                Registrar
+              </button>
+            </form>
+
+            <div className="overflow-hidden border border-gray-200 rounded-xl">
+              <table className="w-full text-left">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Produto</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Estoque Sistema</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Contagem Física</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Diferença</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {products.map((product) => {
+                    const scannedCount = scannedItems[product.barcode] || 0;
+                    const diff = scannedCount - product.stock;
+                    const isOk = diff === 0;
+                    
+                    return (
+                      <tr key={product.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-6 py-4">
+                          <p className="font-medium text-gray-900">{product.name}</p>
+                          <p className="text-xs text-gray-500">{product.barcode}</p>
+                        </td>
+                        <td className="px-6 py-4 font-medium text-gray-500">{product.stock}</td>
+                        <td className="px-6 py-4 font-bold text-blue-600">{scannedCount}</td>
+                        <td className="px-6 py-4">
+                          <span className={cn(
+                            "font-bold",
+                            diff > 0 ? "text-green-600" : diff < 0 ? "text-red-600" : "text-gray-400"
+                          )}>
+                            {diff > 0 ? `+${diff}` : diff}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          {scannedCount === 0 ? (
+                            <span className="px-2 py-1 rounded-full text-xs font-bold bg-gray-100 text-gray-600">Pendente</span>
+                          ) : isOk ? (
+                            <span className="px-2 py-1 rounded-full text-xs font-bold bg-green-100 text-green-600">OK</span>
+                          ) : (
+                            <span className="px-2 py-1 rounded-full text-xs font-bold bg-red-100 text-red-600">Divergente</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            
+            <div className="mt-6 flex justify-end">
+              <button 
+                onClick={() => setScannedItems({})}
+                className="px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg font-medium transition-colors"
+              >
+                Zerar Contagem
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -384,10 +564,10 @@ const Lojinha: React.FC = () => {
                   return (
                     <tr key={t.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 text-sm text-gray-500">
-                        {t.date?.toDate ? format(t.date.toDate(), 'dd/MM/yyyy HH:mm') : 'Pendente'}
+                        {t.created_at ? format(new Date(t.created_at), 'dd/MM/yyyy HH:mm') : 'Pendente'}
                       </td>
                       <td className="px-6 py-4 font-medium text-gray-900">
-                        {product?.name || 'Produto Removido'}
+                        {t.products?.name || 'Produto Removido'}
                       </td>
                       <td className="px-6 py-4">
                         <span className={cn(
@@ -436,7 +616,7 @@ const Lojinha: React.FC = () => {
                     {demand.priority}
                   </span>
                   <span className="text-xs text-gray-400">
-                    {demand.createdAt?.toDate ? format(demand.createdAt.toDate(), 'dd/MM') : ''}
+                    {demand.created_at ? format(new Date(demand.created_at), 'dd/MM') : ''}
                   </span>
                 </div>
                 <h4 className="font-bold text-gray-900 mb-2">{demand.title}</h4>
@@ -481,6 +661,9 @@ const Lojinha: React.FC = () => {
         </div>
       )}
 
+      {/* Modals */}
+      {/* ... existing modals ... */}
+      
       {/* Add Product Modal */}
       {isAddModalOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -666,6 +849,7 @@ const Lojinha: React.FC = () => {
         </div>
       )}
     </div>
+    </>
   );
 };
 

@@ -12,53 +12,70 @@ import {
   BarChart3,
   FileText
 } from 'lucide-react';
-import { collection, query, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, orderBy } from 'firebase/firestore';
-import { db } from '../firebase';
+import { supabase } from '../supabase';
 import { cn } from '../lib/utils';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { useAuth } from '../AuthContext';
 
 interface ScoutMember {
   id: string;
-  paxtuId: string;
+  paxtu_id: string;
   name: string;
   status: 'active' | 'inactive' | 'exempt';
-  paymentStatus: 'paid' | 'overdue' | 'exempt';
+  payment_status: 'paid' | 'overdue' | 'exempt';
   email: string;
-  lastUpdate: any;
+  last_update: string;
 }
 
 const Scouts: React.FC = () => {
+  const { user, profile, loading: authLoading } = useAuth();
   const [activeTab, setActiveTab] = useState<'membros' | 'pagamentos' | 'paxtu' | 'relatorios'>('membros');
   const [members, setMembers] = useState<ScoutMember[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newMember, setNewMember] = useState({
-    paxtuId: '',
+    paxtu_id: '',
     name: '',
     status: 'active' as 'active' | 'inactive' | 'exempt',
-    paymentStatus: 'paid' as 'paid' | 'overdue' | 'exempt',
+    payment_status: 'paid' as 'paid' | 'overdue' | 'exempt',
     email: ''
   });
 
   useEffect(() => {
-    const q = query(collection(db, 'scout_members'), orderBy('name', 'asc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const mems = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ScoutMember));
-      setMembers(mems);
-    });
-    return () => unsubscribe();
-  }, []);
+    if (!user || authLoading) return;
+
+    fetchMembers();
+
+    const subscription = supabase
+      .channel('members_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'scout_members' }, () => fetchMembers())
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(subscription);
+    };
+  }, [user, authLoading]);
+
+  const fetchMembers = async () => {
+    const { data, error } = await supabase
+      .from('scout_members')
+      .select('*')
+      .order('name', { ascending: true });
+    
+    if (data) setMembers(data);
+    if (error) console.error(error);
+  };
 
   const handleAddMember = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await addDoc(collection(db, 'scout_members'), {
-        ...newMember,
-        lastUpdate: serverTimestamp()
-      });
+      const { error } = await supabase.from('scout_members').insert([newMember]);
+      if (error) throw error;
+      
       setIsModalOpen(false);
-      setNewMember({ paxtuId: '', name: '', status: 'active', paymentStatus: 'paid', email: '' });
+      setNewMember({ paxtu_id: '', name: '', status: 'active', payment_status: 'paid', email: '' });
+      fetchMembers();
     } catch (err) {
       console.error(err);
     }
@@ -66,12 +83,12 @@ const Scouts: React.FC = () => {
 
   const filteredMembers = members.filter(m => 
     m.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    m.paxtuId.includes(searchTerm)
+    m.paxtu_id?.includes(searchTerm)
   );
 
   const stats = {
     active: members.filter(m => m.status === 'active').length,
-    overdue: members.filter(m => m.paymentStatus === 'overdue').length,
+    overdue: members.filter(m => m.payment_status === 'overdue').length,
     exempt: members.filter(m => m.status === 'exempt').length,
     inactive: members.filter(m => m.status === 'inactive').length,
   };
@@ -177,7 +194,7 @@ const Scouts: React.FC = () => {
                         <p className="text-xs text-gray-500">{member.email}</p>
                       </td>
                       <td className="px-6 py-4 text-sm font-mono text-gray-600">
-                        {member.paxtuId}
+                        {member.paxtu_id}
                       </td>
                       <td className="px-6 py-4">
                         <span className={cn(
@@ -191,14 +208,14 @@ const Scouts: React.FC = () => {
                       <td className="px-6 py-4">
                         <span className={cn(
                           "px-2 py-1 rounded-full text-[10px] font-bold uppercase",
-                          member.paymentStatus === 'paid' ? "bg-green-100 text-green-600" :
-                          member.paymentStatus === 'overdue' ? "bg-red-100 text-red-600" : "bg-blue-100 text-blue-600"
+                          member.payment_status === 'paid' ? "bg-green-100 text-green-600" :
+                          member.payment_status === 'overdue' ? "bg-red-100 text-red-600" : "bg-blue-100 text-blue-600"
                         )}>
-                          {member.paymentStatus === 'paid' ? 'Em dia' : member.paymentStatus === 'overdue' ? 'Inadimplente' : 'Isento'}
+                          {member.payment_status === 'paid' ? 'Em dia' : member.payment_status === 'overdue' ? 'Inadimplente' : 'Isento'}
                         </span>
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-500">
-                        {member.lastUpdate?.toDate ? format(member.lastUpdate.toDate(), 'dd/MM/yyyy', { locale: ptBR }) : '-'}
+                        {member.last_update ? format(new Date(member.last_update), 'dd/MM/yyyy', { locale: ptBR }) : '-'}
                       </td>
                     </tr>
                   ))}
@@ -300,8 +317,8 @@ const Scouts: React.FC = () => {
                     required
                     type="text"
                     className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                    value={newMember.paxtuId}
-                    onChange={(e) => setNewMember({...newMember, paxtuId: e.target.value})}
+                    value={newMember.paxtu_id}
+                    onChange={(e) => setNewMember({...newMember, paxtu_id: e.target.value})}
                   />
                 </div>
                 <div>
@@ -332,8 +349,8 @@ const Scouts: React.FC = () => {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Pagamento</label>
                   <select 
                     className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                    value={newMember.paymentStatus}
-                    onChange={(e) => setNewMember({...newMember, paymentStatus: e.target.value as any})}
+                    value={newMember.payment_status}
+                    onChange={(e) => setNewMember({...newMember, payment_status: e.target.value as any})}
                   >
                     <option value="paid">Em dia</option>
                     <option value="overdue">Inadimplente</option>

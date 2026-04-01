@@ -13,11 +13,11 @@ import {
   ClipboardCheck,
   Download
 } from 'lucide-react';
-import { collection, query, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, orderBy } from 'firebase/firestore';
-import { db } from '../firebase';
+import { supabase } from '../supabase';
 import { cn } from '../lib/utils';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { useAuth } from '../AuthContext';
 
 interface Asset {
   id: string;
@@ -26,11 +26,12 @@ interface Asset {
   value: number;
   status: 'active' | 'disposed' | 'pending_approval';
   justification?: string;
-  dateAcquired: any;
-  dateDisposed?: any;
+  date_acquired: string;
+  date_disposed?: string;
 }
 
 const Inventory: React.FC = () => {
+  const { user, profile, loading: authLoading } = useAuth();
   const [activeTab, setActiveTab] = useState<'ativos' | 'demandas' | 'baixas' | 'relatorios'>('ativos');
   const [assets, setAssets] = useState<Asset[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -47,23 +48,39 @@ const Inventory: React.FC = () => {
   });
 
   useEffect(() => {
-    const q = query(collection(db, 'assets'), orderBy('name', 'asc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const asts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Asset));
-      setAssets(asts);
-    });
-    return () => unsubscribe();
-  }, []);
+    if (!user || authLoading) return;
+
+    fetchAssets();
+
+    const subscription = supabase
+      .channel('assets_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'assets' }, () => fetchAssets())
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(subscription);
+    };
+  }, [user, authLoading]);
+
+  const fetchAssets = async () => {
+    const { data, error } = await supabase
+      .from('assets')
+      .select('*')
+      .order('name', { ascending: true });
+    
+    if (data) setAssets(data);
+    if (error) console.error(error);
+  };
 
   const handleAddAsset = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await addDoc(collection(db, 'assets'), {
-        ...newAsset,
-        dateAcquired: serverTimestamp()
-      });
+      const { error } = await supabase.from('assets').insert([newAsset]);
+      if (error) throw error;
+      
       setIsModalOpen(false);
       setNewAsset({ name: '', description: '', value: 0, status: 'pending_approval' });
+      fetchAssets();
     } catch (err) {
       console.error(err);
     }
@@ -71,7 +88,12 @@ const Inventory: React.FC = () => {
 
   const handleApprove = async (assetId: string) => {
     try {
-      await updateDoc(doc(db, 'assets', assetId), { status: 'active' });
+      const { error } = await supabase
+        .from('assets')
+        .update({ status: 'active' })
+        .eq('id', assetId);
+      if (error) throw error;
+      fetchAssets();
     } catch (err) {
       console.error(err);
     }
@@ -81,14 +103,21 @@ const Inventory: React.FC = () => {
     e.preventDefault();
     if (!selectedAsset) return;
     try {
-      await updateDoc(doc(db, 'assets', selectedAsset.id), { 
-        status: 'disposed',
-        justification: disposalJustification,
-        dateDisposed: serverTimestamp()
-      });
+      const { error } = await supabase
+        .from('assets')
+        .update({ 
+          status: 'disposed',
+          justification: disposalJustification,
+          date_disposed: new Date().toISOString()
+        })
+        .eq('id', selectedAsset.id);
+      
+      if (error) throw error;
+
       setIsDisposalModalOpen(false);
       setDisposalJustification('');
       setSelectedAsset(null);
+      fetchAssets();
     } catch (err) {
       console.error(err);
     }
@@ -99,12 +128,18 @@ const Inventory: React.FC = () => {
     a.description.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const tabs = [
+  const isUserAtivos = profile?.role === 'user_ativos';
+
+  const allTabs = [
     { id: 'ativos', label: 'Gestão de Ativos', icon: Box },
     { id: 'demandas', label: 'Fluxo de Novas Demandas', icon: ClipboardCheck },
     { id: 'baixas', label: 'Baixa de Ativos', icon: Trash2 },
     { id: 'relatorios', label: 'Relatórios de Inventário', icon: FileText },
   ];
+
+  const tabs = isUserAtivos
+    ? allTabs.filter(t => !['relatorios'].includes(t.id))
+    : allTabs;
 
   return (
     <div className="space-y-8">
@@ -170,7 +205,7 @@ const Inventory: React.FC = () => {
                   
                   <div className="flex items-center text-xs text-gray-400">
                     <Clock size={14} className="mr-1" />
-                    Adquirido em: {asset.dateAcquired?.toDate ? format(asset.dateAcquired.toDate(), 'dd/MM/yyyy', { locale: ptBR }) : '-'}
+                    Adquirido em: {asset.date_acquired ? format(new Date(asset.date_acquired), 'dd/MM/yyyy', { locale: ptBR }) : '-'}
                   </div>
                 </div>
 
@@ -199,7 +234,7 @@ const Inventory: React.FC = () => {
                     </button>
                   ) : (
                     <div className="w-full text-center text-xs text-gray-400 italic py-2">
-                      Baixado em: {asset.dateDisposed?.toDate ? format(asset.dateDisposed.toDate(), 'dd/MM/yyyy', { locale: ptBR }) : '-'}
+                      Baixado em: {asset.date_disposed ? format(new Date(asset.date_disposed), 'dd/MM/yyyy', { locale: ptBR }) : '-'}
                     </div>
                   )}
                 </div>
