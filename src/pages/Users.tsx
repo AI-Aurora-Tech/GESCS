@@ -242,7 +242,7 @@ const Users: React.FC = () => {
                   <td className="px-6 py-4">
                     <span className={cn(
                       "px-3 py-1 rounded-full text-xs font-bold tracking-wide uppercase",
-                      user.role === 'admin' ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"
+                      user.role.startsWith('admin_') ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"
                     )}>
                       {roleLabels[user.role]}
                     </span>

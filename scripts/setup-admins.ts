@@ -22,7 +22,7 @@ const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
 const admins = [
   { name: 'Edson Kawakami', username: 'edson_kawakami', password: 'Admin123', role: 'admin_geral' },
   { name: 'Pedro Santos', username: 'pedro_santos', password: 'Admin123', role: 'admin_geral' },
-  { name: 'Viviane', username: 'Viviane', password: 'Admin123', role: 'admin_geral' },
+  { name: 'Viviane Oliveira', username: 'viviane_oliveira', password: 'Admin123', role: 'admin_geral' },
   { name: 'Juliana Santos', username: 'juliana_santos', password: 'Admin123', role: 'admin_geral' }
 ];
 
