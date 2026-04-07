@@ -12,13 +12,22 @@ import Users from './pages/Users';
 
 import ForcePasswordChange from './components/ForcePasswordChange';
 
-const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+const ProtectedRoute: React.FC<{ children: React.ReactNode, allowedRoles?: string[] }> = ({ children, allowedRoles }) => {
   const { user, profile, loading } = useAuth();
   
   if (loading) return <div className="flex items-center justify-center h-screen">Carregando...</div>;
   if (!user) return <Navigate to="/login" />;
   if (profile?.requires_password_change) return <ForcePasswordChange />;
   
+  if (allowedRoles && profile) {
+    const isGeral = profile.role === 'admin_geral';
+    const hasAccess = isGeral || allowedRoles.some(role => profile.role.includes(role));
+    
+    if (!hasAccess) {
+      return <Navigate to="/" />;
+    }
+  }
+
   return <>{children}</>;
 };
 
@@ -34,11 +43,11 @@ const App: React.FC = () => {
             </ProtectedRoute>
           }>
             <Route index element={<Dashboard />} />
-            <Route path="lojinha" element={<Lojinha />} />
-            <Route path="cantina" element={<Cantina />} />
-            <Route path="scouts" element={<Scouts />} />
-            <Route path="inventory" element={<Inventory />} />
-            <Route path="users" element={<Users />} />
+            <Route path="lojinha" element={<ProtectedRoute allowedRoles={['lojinha']}><Lojinha /></ProtectedRoute>} />
+            <Route path="cantina" element={<ProtectedRoute allowedRoles={['cantina', 'financeiro']}><Cantina /></ProtectedRoute>} />
+            <Route path="scouts" element={<ProtectedRoute allowedRoles={['scout']}><Scouts /></ProtectedRoute>} />
+            <Route path="inventory" element={<ProtectedRoute allowedRoles={['ativos']}><Inventory /></ProtectedRoute>} />
+            <Route path="users" element={<ProtectedRoute allowedRoles={['admin_']}><Users /></ProtectedRoute>} />
           </Route>
         </Routes>
       </Router>

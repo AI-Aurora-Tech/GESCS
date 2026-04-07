@@ -17,8 +17,13 @@ import {
 } from 'recharts';
 import { supabase } from '../supabase';
 import { cn } from '../lib/utils';
+import { useAuth } from '../AuthContext';
 
 const Dashboard: React.FC = () => {
+  const { profile } = useAuth();
+  const role = profile?.role || '';
+  const isGeral = role === 'admin_geral';
+
   const [stats, setStats] = useState({
     lojinhaSales: 0,
     cantinaBalance: 0,
@@ -33,39 +38,57 @@ const Dashboard: React.FC = () => {
   const fetchStats = async () => {
     try {
       // Lojinha Sales (sum of stock_transactions where type is 'out')
-      const { data: lojinhaData } = await supabase
-        .from('stock_transactions')
-        .select('quantity, products(price)')
-        .eq('type', 'out');
-      
-      const lojinhaTotal = lojinhaData?.reduce((acc, curr: any) => acc + (curr.quantity * (curr.products?.price || 0)), 0) || 0;
+      let lojinhaTotal = 0;
+      try {
+        const { data: lojinhaData, error: lojinhaError } = await supabase
+          .from('stock_transactions')
+          .select('quantity, products(price)')
+          .eq('type', 'out');
+        
+        if (!lojinhaError && lojinhaData) {
+          lojinhaTotal = lojinhaData.reduce((acc, curr: any) => acc + (curr.quantity * (curr.products?.price || 0)), 0);
+        }
+      } catch (e) {}
 
       // Cantina Balance
-      const { data: cantinaData } = await supabase
-        .from('financial_records')
-        .select('type, amount');
-      
-      const cantinaBalance = cantinaData?.reduce((acc, curr) => {
-        return curr.type === 'income' ? acc + curr.amount : acc - curr.amount;
-      }, 0) || 0;
+      let cantinaBalance = 0;
+      try {
+        const { data: cantinaData, error: cantinaError } = await supabase
+          .from('financial_records')
+          .select('type, amount');
+        
+        if (!cantinaError && cantinaData) {
+          cantinaBalance = cantinaData.reduce((acc, curr) => {
+            return curr.type === 'income' ? acc + curr.amount : acc - curr.amount;
+          }, 0);
+        }
+      } catch (e) {}
 
       // Active Scouts
-      const { count: scoutsCount } = await supabase
-        .from('scout_members')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'active');
+      let scoutsCount = 0;
+      try {
+        const { count, error: scoutsError } = await supabase
+          .from('scout_members')
+          .select('*', { count: 'exact', head: true })
+          .eq('status', 'active');
+        if (!scoutsError) scoutsCount = count || 0;
+      } catch (e) {}
 
       // Total Assets
-      const { count: assetsCount } = await supabase
-        .from('assets')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'active');
+      let assetsCount = 0;
+      try {
+        const { count, error: assetsError } = await supabase
+          .from('assets')
+          .select('*', { count: 'exact', head: true })
+          .eq('status', 'active');
+        if (!assetsError) assetsCount = count || 0;
+      } catch (e) {}
 
       setStats({
         lojinhaSales: lojinhaTotal,
         cantinaBalance: cantinaBalance,
-        activeScouts: scoutsCount || 0,
-        totalAssets: assetsCount || 0
+        activeScouts: scoutsCount,
+        totalAssets: assetsCount
       });
     } catch (err) {
       console.error(err);
@@ -73,9 +96,9 @@ const Dashboard: React.FC = () => {
   };
 
   const chartData = [
-    { name: 'Lojinha', value: stats.lojinhaSales },
-    { name: 'Cantina', value: stats.cantinaBalance },
-  ];
+    (isGeral || role.includes('lojinha')) && { name: 'Lojinha', value: stats.lojinhaSales },
+    (isGeral || role.includes('cantina') || role.includes('financeiro')) && { name: 'Cantina', value: stats.cantinaBalance },
+  ].filter(Boolean);
 
   return (
     <div className="space-y-8">
@@ -87,11 +110,11 @@ const Dashboard: React.FC = () => {
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {[
-          { label: 'Vendas Lojinha', value: `R$ ${stats.lojinhaSales.toFixed(2)}`, icon: Store, color: 'text-blue-600', bg: 'bg-blue-100' },
-          { label: 'Saldo Cantina', value: `R$ ${stats.cantinaBalance.toFixed(2)}`, icon: TrendingUp, color: 'text-green-600', bg: 'bg-green-100' },
-          { label: 'Escoteiros Ativos', value: stats.activeScouts.toString(), icon: Users, color: 'text-purple-600', bg: 'bg-purple-100' },
-          { label: 'Ativos Patrimônio', value: stats.totalAssets.toString(), icon: Package, color: 'text-orange-600', bg: 'bg-orange-100' },
-        ].map((stat) => (
+          (isGeral || role.includes('lojinha')) && { label: 'Vendas Lojinha', value: `R$ ${stats.lojinhaSales.toFixed(2)}`, icon: Store, color: 'text-blue-600', bg: 'bg-blue-100' },
+          (isGeral || role.includes('cantina') || role.includes('financeiro')) && { label: 'Saldo Cantina', value: `R$ ${stats.cantinaBalance.toFixed(2)}`, icon: TrendingUp, color: 'text-green-600', bg: 'bg-green-100' },
+          (isGeral || role.includes('scout')) && { label: 'Escoteiros Ativos', value: stats.activeScouts.toString(), icon: Users, color: 'text-purple-600', bg: 'bg-purple-100' },
+          (isGeral || role.includes('ativos')) && { label: 'Ativos Patrimônio', value: stats.totalAssets.toString(), icon: Package, color: 'text-orange-600', bg: 'bg-orange-100' },
+        ].filter(Boolean).map((stat: any) => (
           <div key={stat.label} className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
             <div className="flex items-center justify-between mb-4">
               <div className={cn("p-2 rounded-lg", stat.bg)}>

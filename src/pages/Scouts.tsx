@@ -93,12 +93,18 @@ const Scouts: React.FC = () => {
     inactive: members.filter(m => m.status === 'inactive').length,
   };
 
-  const tabs = [
+  const isUserScout = profile?.role === 'user_scout';
+
+  const allTabs = [
     { id: 'membros', label: 'Cadastro de Membros', icon: UserCheck },
     { id: 'pagamentos', label: 'Controle de Pagamentos (CORA)', icon: CreditCard },
     { id: 'paxtu', label: 'Importação PAXTU', icon: Upload },
     { id: 'relatorios', label: 'Relatórios e Dashboards', icon: BarChart3 },
   ];
+
+  const tabs = isUserScout
+    ? allTabs.filter(t => !['relatorios'].includes(t.id))
+    : allTabs;
 
   return (
     <div className="space-y-8">

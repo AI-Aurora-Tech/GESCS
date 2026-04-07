@@ -19,7 +19,7 @@ interface UserProfile {
   id: string;
   email: string;
   display_name: string;
-  role: 'admin_geral' | 'admin_cantina' | 'user_cantina' | 'admin_lojinha' | 'user_lojinha' | 'admin_ativos' | 'user_ativos' | 'admin_financeiro' | 'user_financeiro';
+  role: 'admin_geral' | 'admin_cantina' | 'user_cantina' | 'admin_lojinha' | 'user_lojinha' | 'admin_ativos' | 'user_ativos' | 'admin_financeiro' | 'user_financeiro' | 'admin_scout' | 'user_scout';
   created_at?: string;
 }
 
@@ -45,10 +45,19 @@ const Users: React.FC = () => {
     if (!isAdmin) return;
 
     const fetchUsers = async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from('profiles')
         .select('*')
         .order('display_name', { ascending: true });
+      
+      if (profile?.role && profile.role !== 'admin_geral') {
+        const branch = profile.role.split('_')[1];
+        if (branch) {
+          query = query.like('role', `%${branch}%`);
+        }
+      }
+
+      const { data, error } = await query;
       
       if (error) {
         console.error('Error fetching users:', error);
@@ -150,17 +159,20 @@ const Users: React.FC = () => {
     admin_ativos: 'Admin Ativos',
     user_ativos: 'Usuário Ativos',
     admin_financeiro: 'Admin Financeiro',
-    user_financeiro: 'Usuário Financeiro'
+    user_financeiro: 'Usuário Financeiro',
+    admin_scout: 'Admin Escoteiros',
+    user_scout: 'Usuário Escoteiros'
   };
 
   const getAvailableRoles = () => {
     if (profile?.role === 'admin_geral') {
       return Object.entries(roleLabels);
     }
-    if (profile?.role === 'admin_cantina') return [['user_cantina', roleLabels['user_cantina']]];
-    if (profile?.role === 'admin_lojinha') return [['user_lojinha', roleLabels['user_lojinha']]];
-    if (profile?.role === 'admin_ativos') return [['user_ativos', roleLabels['user_ativos']]];
-    if (profile?.role === 'admin_financeiro') return [['user_financeiro', roleLabels['user_financeiro']]];
+    if (profile?.role === 'admin_cantina') return [['admin_cantina', roleLabels['admin_cantina']], ['user_cantina', roleLabels['user_cantina']]];
+    if (profile?.role === 'admin_lojinha') return [['admin_lojinha', roleLabels['admin_lojinha']], ['user_lojinha', roleLabels['user_lojinha']]];
+    if (profile?.role === 'admin_ativos') return [['admin_ativos', roleLabels['admin_ativos']], ['user_ativos', roleLabels['user_ativos']]];
+    if (profile?.role === 'admin_financeiro') return [['admin_financeiro', roleLabels['admin_financeiro']], ['user_financeiro', roleLabels['user_financeiro']]];
+    if (profile?.role === 'admin_scout') return [['admin_scout', roleLabels['admin_scout']], ['user_scout', roleLabels['user_scout']]];
     return [];
   };
 
