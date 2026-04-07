@@ -56,97 +56,81 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const fetchProfile = async (id: string, email: string) => {
     try {
+      // Try to fetch via API to bypass RLS issues
+      const response = await fetch(`/api/users/profile/${id}`);
+      if (response.ok) {
+        const data = await response.json();
+        setProfile(data as UserProfile);
+        return;
+      }
+
+      // If API fails (e.g. not found), try to fetch via Supabase directly just in case
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', id)
         .single();
 
-      if (error) {
-        console.error('Error fetching profile:', error);
-        if (error.code !== 'PGRST116') {
-          setErrorMsg('Error fetching profile: ' + error.message);
-        }
-      }
-
-        if (error || !data) {
-          // Create profile if it doesn't exist via our API
-          const isAdmin = email === 'ai.auroratech@gmail.com';
+      if (error || !data) {
+        // Create profile if it doesn't exist via our API
+        const isAdmin = email === 'ai.auroratech@gmail.com';
+        
+        try {
+          const createResponse = await fetch('/api/users/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email: email,
+              password: Math.random().toString(36).slice(-8) + 'A1!',
+              displayName: email.split('@')[0] || 'Usuário',
+              role: isAdmin ? 'admin_geral' : 'user_lojinha'
+            })
+          });
           
-          try {
-            const response = await fetch('/api/users/create', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                email: email,
-                password: Math.random().toString(36).slice(-8) + 'A1!', // Dummy password, user will login with OAuth or existing password
-                displayName: email.split('@')[0] || 'Usuário',
-                role: isAdmin ? 'admin_geral' : 'user_lojinha'
-              })
-            });
-            
-            if (response.ok) {
-              // Fetch it again after creation, using a retry mechanism since RLS might take a moment or we might need to rely on the session
-              let retries = 3;
-              let newData = null;
-              while (retries > 0 && !newData) {
-                const { data: fetchedData } = await supabase
-                  .from('profiles')
-                  .select('*')
-                  .eq('id', id)
-                  .single();
-                
-                if (fetchedData) {
-                  newData = fetchedData;
-                } else {
-                  await new Promise(resolve => setTimeout(resolve, 1000));
-                  retries--;
-                }
-              }
-                
-              if (newData) {
-                setProfile(newData as UserProfile);
-              } else {
-                // If we still can't fetch it (likely RLS), just set a local profile so the user can proceed
-                setProfile({
-                  id: id,
-                  email: email,
-                  display_name: email.split('@')[0] || 'Usuário',
-                  role: isAdmin ? 'admin_geral' : 'user_lojinha',
-                  requires_password_change: false
-                });
-              }
+          if (createResponse.ok) {
+            // Fetch it again after creation via API
+            const fetchAgain = await fetch(`/api/users/profile/${id}`);
+            if (fetchAgain.ok) {
+              const newData = await fetchAgain.json();
+              setProfile(newData as UserProfile);
             } else {
-              // If API fails (e.g. user already exists in auth but not profiles), fallback to direct upsert and hope RLS allows it (it won't for anon, but might for auth user)
-              const newProfile = {
+              setProfile({
                 id: id,
                 email: email,
                 display_name: email.split('@')[0] || 'Usuário',
                 role: isAdmin ? 'admin_geral' : 'user_lojinha',
                 requires_password_change: false
-              };
-
-              const { data: createdData, error: createError } = await supabase
-                .from('profiles')
-                .upsert([newProfile])
-                .select()
-                .single();
-
-              if (createError) {
-                console.error('Error creating profile:', createError);
-                // Don't show error to user if they just logged in and profile creation failed, they might still be able to use the app if RLS allows reads
-              }
-
-              if (createdData) {
-                setProfile(createdData as UserProfile);
-              }
+              });
             }
-          } catch (apiError) {
-             console.error('API Error:', apiError);
+          } else {
+            // If API fails (e.g. user already exists in auth but not profiles), fallback
+            const newProfile = {
+              id: id,
+              email: email,
+              display_name: email.split('@')[0] || 'Usuário',
+              role: isAdmin ? 'admin_geral' : 'user_lojinha',
+              requires_password_change: false
+            };
+
+            const { data: createdData, error: createError } = await supabase
+              .from('profiles')
+              .upsert([newProfile])
+              .select()
+              .single();
+
+            if (createdData) {
+              setProfile(createdData as UserProfile);
+            } else {
+              // Ultimate fallback so user is not stuck
+              setProfile(newProfile);
+            }
           }
-        } else {
-          setProfile(data as UserProfile);
+        } catch (apiError) {
+           console.error('API Error:', apiError);
         }
+      } else {
+        setProfile(data as UserProfile);
+      }
     } catch (e: any) {
       setErrorMsg('Exception: ' + e.message);
     }

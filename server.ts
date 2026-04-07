@@ -167,6 +167,24 @@ async function startServer() {
     }
   });
 
+  // API Route to fetch a user profile
+  app.get("/api/users/profile/:uid", async (req, res) => {
+    const { uid } = req.params;
+    try {
+      const { data, error } = await supabaseAdmin
+        .from("profiles")
+        .select("*")
+        .eq("id", uid)
+        .single();
+      
+      if (error) throw error;
+      res.json(data);
+    } catch (error: any) {
+      console.error("Error fetching profile:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
