@@ -41,14 +41,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     fetchSession();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
       if (session?.user) {
-        await fetchProfile(session.user.id, session.user.email || '');
+        fetchProfile(session.user.id, session.user.email || '').finally(() => {
+          setLoading(false);
+        });
       } else {
         setProfile(null);
+        setLoading(false);
       }
-      setLoading(false);
     });
 
     return () => subscription.unsubscribe();
@@ -59,9 +61,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Try to fetch via API to bypass RLS issues
       const response = await fetch(`/api/users/profile/${id}`);
       if (response.ok) {
-        const data = await response.json();
-        setProfile(data as UserProfile);
-        return;
+        const contentType = response.headers.get("content-type");
+        if (contentType && contentType.indexOf("application/json") !== -1) {
+          const data = await response.json();
+          
+          setProfile(data as UserProfile);
+          return;
+        } else {
+          console.error("API returned non-JSON response");
+        }
       }
 
       // If API fails (e.g. not found), try to fetch via Supabase directly just in case
@@ -73,8 +81,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (error || !data) {
         // Create profile if it doesn't exist via our API
-        const isAdmin = email === 'ai.auroratech@gmail.com';
-        
         try {
           const createResponse = await fetch('/api/users/create', {
             method: 'POST',
@@ -83,7 +89,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               email: email,
               password: Math.random().toString(36).slice(-8) + 'A1!',
               displayName: email.split('@')[0] || 'Usuário',
-              role: isAdmin ? 'admin_geral' : 'user_lojinha'
+              role: 'user_lojinha'
             })
           });
           
@@ -98,7 +104,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 id: id,
                 email: email,
                 display_name: email.split('@')[0] || 'Usuário',
-                role: isAdmin ? 'admin_geral' : 'user_lojinha',
+                role: 'user_lojinha',
                 requires_password_change: false
               });
             }
@@ -108,7 +114,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               id: id,
               email: email,
               display_name: email.split('@')[0] || 'Usuário',
-              role: isAdmin ? 'admin_geral' : 'user_lojinha',
+              role: 'user_lojinha',
               requires_password_change: false
             };
 

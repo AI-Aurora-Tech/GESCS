@@ -26,7 +26,7 @@ const supabaseAdmin = createClient(supabaseUrl || "", supabaseServiceRoleKey || 
 });
 
 async function ensureAdminUser() {
-  const adminEmail = "ai.auroratech@gmail.com";
+  const adminEmail = "pedro_santos@scouts.local";
   try {
     // Check if profiles table exists first
     const { error: tableCheckError } = await supabaseAdmin.from("profiles").select("id").limit(1);
@@ -45,9 +45,9 @@ async function ensureAdminUser() {
       console.log("Creating default admin user...");
       const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
         email: adminEmail,
-        password: "admin123",
+        password: "Admin123",
         email_confirm: true,
-        user_metadata: { display_name: "Administrador Geral" }
+        user_metadata: { display_name: "Pedro Santos" }
       });
 
       if (createError) throw createError;
@@ -58,7 +58,7 @@ async function ensureAdminUser() {
           .upsert({
             id: newUser.user.id,
             email: adminEmail,
-            display_name: "Administrador Geral",
+            display_name: "Pedro Santos",
             role: "admin_geral"
           });
         
@@ -85,7 +85,7 @@ async function ensureAdminUser() {
           .upsert({
             id: adminUser.id,
             email: adminEmail,
-            display_name: "Administrador Geral",
+            display_name: "Pedro Santos",
             role: "admin_geral"
           });
         if (profileError) {
@@ -181,6 +181,40 @@ async function startServer() {
       res.json(data);
     } catch (error: any) {
       console.error("Error fetching profile:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // API Route to update a user's role
+  app.post("/api/users/update-role", async (req, res) => {
+    const { uid, role } = req.body;
+    try {
+      const { error } = await supabaseAdmin
+        .from("profiles")
+        .update({ role })
+        .eq("id", uid);
+      
+      if (error) throw error;
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error updating role:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // API Route to update requires_password_change
+  app.post("/api/users/password-changed", async (req, res) => {
+    const { uid } = req.body;
+    try {
+      const { error } = await supabaseAdmin
+        .from("profiles")
+        .update({ requires_password_change: false })
+        .eq("id", uid);
+      
+      if (error) throw error;
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error updating password change status:", error);
       res.status(500).json({ error: error.message });
     }
   });

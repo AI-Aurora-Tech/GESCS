@@ -36,12 +36,15 @@ const ForcePasswordChange: React.FC = () => {
 
       // Update profile to set requires_password_change to false
       if (profile) {
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .update({ requires_password_change: false })
-          .eq('id', profile.id);
-
-        if (profileError) throw profileError;
+        try {
+          await fetch('/api/users/password-changed', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uid: profile.id })
+          });
+        } catch (e) {
+          console.error("Failed to update profile via API", e);
+        }
       }
 
       setSuccess(true);

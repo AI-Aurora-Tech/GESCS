@@ -19,12 +19,13 @@ const Login: React.FC = () => {
     setLoading(true);
     try {
       // Allow login with username (appends @scouts.local) or full email
-      const loginEmail = username.includes('@') ? username : `${username.toLowerCase().trim()}@scouts.local`;
+      const cleanUsername = username.trim().toLowerCase();
+      const loginEmail = cleanUsername.includes('@') ? cleanUsername : `${cleanUsername}@scouts.local`;
       await login(loginEmail, password);
     } catch (err: any) {
       console.error(err);
-      if (err.message?.includes('Email logins are terminated') || err.status === 400) {
-        setError('Usuário ou senha incorretos.');
+      if (err.message?.includes('Invalid login credentials') || err.status === 400) {
+        setError('Usuário ou senha incorretos. Verifique seus dados.');
       } else if (err.message?.includes('Email provider is disabled')) {
         setError('O login por e-mail/senha não está ativado no Supabase. Ative-o em Authentication > Providers.');
       } else {
