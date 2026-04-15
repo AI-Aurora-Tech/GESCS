@@ -54,6 +54,11 @@ const Lojinha: React.FC = () => {
     category: 'Uniforme'
   });
 
+  const generateBarcode = () => {
+    // Generate a 12-digit numeric string (EAN-13 style without checksum for simplicity)
+    return Math.floor(100000000000 + Math.random() * 900000000000).toString();
+  };
+
   // New Demand Form
   const [newDemand, setNewDemand] = useState({
     title: '',
@@ -110,7 +115,12 @@ const Lojinha: React.FC = () => {
   const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const { error } = await supabase.from('products').insert([newProduct]);
+      const productToInsert = {
+        ...newProduct,
+        barcode: newProduct.barcode || generateBarcode()
+      };
+      
+      const { error } = await supabase.from('products').insert([productToInsert]);
       if (error) throw error;
       
       setIsAddModalOpen(false);
@@ -221,13 +231,29 @@ const Lojinha: React.FC = () => {
 
   return (
     <>
-      <div className="hidden print:block p-8">
-        <h1 className="text-2xl font-bold mb-8 text-center">Etiquetas de Produtos - Lojinha</h1>
-        <div className="grid grid-cols-3 gap-8">
+      <div className="hidden print:block p-4">
+        <div className="grid grid-cols-4 gap-4">
           {filteredProducts.map(product => (
-            <div key={product.id} className="flex flex-col items-center justify-center p-4 border border-dashed border-gray-400 rounded-lg">
-              <span className="font-bold text-sm mb-2 text-center">{product.name}</span>
-              <Barcode value={product.barcode} height={40} width={1.5} fontSize={12} />
+            <div key={product.id} className="flex flex-col items-center p-3 border border-gray-300 rounded-lg bg-white text-black shadow-sm">
+              {/* Logo Placeholder */}
+              <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center mb-2">
+                <span className="text-white text-[10px] font-black">GESCS</span>
+              </div>
+              <span className="font-bold text-[10px] uppercase text-center leading-tight mb-1 h-6 flex items-center">
+                {product.name}
+              </span>
+              <span className="font-black text-sm mb-2 text-blue-700">
+                R$ {product.price.toFixed(2)}
+              </span>
+              <div className="bg-white p-1 rounded">
+                <Barcode 
+                  value={product.barcode} 
+                  height={35} 
+                  width={1.2} 
+                  fontSize={8} 
+                  margin={0}
+                />
+              </div>
             </div>
           ))}
         </div>
@@ -468,11 +494,11 @@ const Lojinha: React.FC = () => {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Código de Barras (EAN)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Código de Barras (Opcional)</label>
                   <input 
-                    required
                     type="text"
-                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                    placeholder="Gerado automaticamente se vazio"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg bg-gray-50"
                     value={newProduct.barcode}
                     onChange={(e) => setNewProduct({...newProduct, barcode: e.target.value})}
                   />
@@ -684,9 +710,9 @@ const Lojinha: React.FC = () => {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Código de Barras</label>
                   <input 
-                    required
                     type="text"
-                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                    placeholder="Gerado automaticamente"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg bg-gray-50"
                     value={newProduct.barcode}
                     onChange={(e) => setNewProduct({...newProduct, barcode: e.target.value})}
                   />
