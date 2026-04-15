@@ -27,6 +27,8 @@ interface Product {
   price: number;
   stock: number;
   category: string;
+  min_stock?: number;
+  max_stock?: number;
 }
 
 const Lojinha: React.FC = () => {
@@ -51,7 +53,9 @@ const Lojinha: React.FC = () => {
     barcode: '',
     price: 0,
     stock: 0,
-    category: 'Uniforme'
+    category: 'Uniforme',
+    min_stock: 5,
+    max_stock: 50
   });
 
   const generateBarcode = () => {
@@ -124,7 +128,7 @@ const Lojinha: React.FC = () => {
       if (error) throw error;
       
       setIsAddModalOpen(false);
-      setNewProduct({ name: '', barcode: '', price: 0, stock: 0, category: 'Uniforme' });
+      setNewProduct({ name: '', barcode: '', price: 0, stock: 0, category: 'Uniforme', min_stock: 5, max_stock: 50 });
       setActiveTab('estoque');
       fetchData();
     } catch (err) {
@@ -177,6 +181,22 @@ const Lojinha: React.FC = () => {
         }]);
       
       if (transError) throw transError;
+
+      // Automatic Demand Logic: If stock becomes negative or zero, create a demand
+      if (stockAction === 'exit' && newStock <= (selectedProduct.min_stock || 0)) {
+        const { error: demandError } = await supabase
+          .from('lojinha_demands')
+          .insert([{
+            title: `Reposição Urgente: ${selectedProduct.name}`,
+            description: `O estoque atingiu ${newStock} unidades (Mínimo: ${selectedProduct.min_stock || 0}). Necessário realizar compra para atender demanda.`,
+            priority: newStock < 0 ? 'Alta' : 'Média',
+            status: 'Pendente',
+            user_id: profile?.id,
+            user_name: 'Sistema (Automático)'
+          }]);
+        
+        if (demandError) console.error('Erro ao criar demanda automática:', demandError);
+      }
 
       setIsStockModalOpen(false);
       setQuantity(1);
@@ -349,10 +369,18 @@ const Lojinha: React.FC = () => {
                     <td className="px-6 py-4">
                       <span className={cn(
                         "px-2 py-1 rounded-full text-xs font-bold",
-                        product.stock < 5 ? "bg-red-100 text-red-600" : "bg-green-100 text-green-600"
+                        product.stock <= (product.min_stock || 5) ? "bg-red-100 text-red-600" : 
+                        product.stock >= (product.max_stock || 50) ? "bg-orange-100 text-orange-600" :
+                        "bg-green-100 text-green-600"
                       )}>
                         {product.stock} un
                       </span>
+                      {(product.stock <= (product.min_stock || 5)) && (
+                        <p className="text-[10px] text-red-500 mt-1 font-bold">Estoque Baixo!</p>
+                      )}
+                      {(product.stock >= (product.max_stock || 50)) && (
+                        <p className="text-[10px] text-orange-500 mt-1 font-bold">Estoque Alto!</p>
+                      )}
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex gap-2">
@@ -537,6 +565,28 @@ const Lojinha: React.FC = () => {
                     className="w-full px-4 py-2 border border-gray-200 rounded-lg"
                     value={newProduct.stock}
                     onChange={(e) => setNewProduct({...newProduct, stock: parseInt(e.target.value)})}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Mínimo (Alerta)</label>
+                  <input 
+                    required
+                    type="number"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                    value={newProduct.min_stock}
+                    onChange={(e) => setNewProduct({...newProduct, min_stock: parseInt(e.target.value)})}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Máximo (Alerta)</label>
+                  <input 
+                    required
+                    type="number"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                    value={newProduct.max_stock}
+                    onChange={(e) => setNewProduct({...newProduct, max_stock: parseInt(e.target.value)})}
                   />
                 </div>
               </div>
@@ -751,6 +801,28 @@ const Lojinha: React.FC = () => {
                     className="w-full px-4 py-2 border border-gray-200 rounded-lg"
                     value={newProduct.stock}
                     onChange={(e) => setNewProduct({...newProduct, stock: parseInt(e.target.value)})}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Mínimo</label>
+                  <input 
+                    required
+                    type="number"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                    value={newProduct.min_stock}
+                    onChange={(e) => setNewProduct({...newProduct, min_stock: parseInt(e.target.value)})}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Máximo</label>
+                  <input 
+                    required
+                    type="number"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                    value={newProduct.max_stock}
+                    onChange={(e) => setNewProduct({...newProduct, max_stock: parseInt(e.target.value)})}
                   />
                 </div>
               </div>
