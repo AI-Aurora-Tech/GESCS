@@ -10,7 +10,10 @@ import {
   Download,
   History,
   Settings,
-  CreditCard
+  CreditCard,
+  Pencil,
+  Trash2,
+  ChefHat
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { cn } from '../lib/utils';
@@ -30,11 +33,30 @@ interface FinancialRecord {
 
 const Cantina: React.FC = () => {
   const { user, profile, loading: authLoading } = useAuth();
-  const [activeTab, setActiveTab] = useState<'financeiro' | 'eventos' | 'movimentacao' | 'pagvendas' | 'materiais' | 'relatorios' | 'configuracoes'>('financeiro');
+  const [activeTab, setActiveTab] = useState<'financeiro' | 'materiais' | 'receitas' | 'margem' | 'banco' | 'movimentacao' | 'relatorios' | 'configuracoes'>('financeiro');
   const [records, setRecords] = useState<FinancialRecord[]>([]);
   const [materials, setMaterials] = useState<any[]>([]);
+  const [ingredients, setIngredients] = useState<any[]>([]);
+  const [recipes, setRecipes] = useState<any[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isMaterialModalOpen, setIsMaterialModalOpen] = useState(false);
+  const [isRecipeModalOpen, setIsRecipeModalOpen] = useState(false);
+  const [isIngredientModalOpen, setIsIngredientModalOpen] = useState(false);
+  const [isProductionModalOpen, setIsProductionModalOpen] = useState(false);
+  const [selectedRecipe, setSelectedRecipe] = useState<any>(null);
+  const [productionQuantity, setProductionQuantity] = useState(1);
+  
+  const [newIngredient, setNewIngredient] = useState({
+    name: '',
+    stock: 0,
+    unit: 'un',
+    unit_cost: 0
+  });
+
+  const [newRecipe, setNewRecipe] = useState({
+    name: '',
+    ingredients: [] as { ingredient_id: string, quantity: number }[]
+  });
   const [newRecord, setNewRecord] = useState({
     type: 'income' as 'income' | 'expense',
     amount: 0,
@@ -50,11 +72,52 @@ const Cantina: React.FC = () => {
     stock: 0
   });
 
+  const fetchIngredients = async () => {
+    const { data, error } = await supabase
+      .from('cantina_ingredients')
+      .select('*')
+      .order('name', { ascending: true });
+    
+    if (data) setIngredients(data);
+    if (error) console.error(error);
+  };
+
+  const fetchRecipes = async () => {
+    const { data, error } = await supabase
+      .from('cantina_recipes')
+      .select('*')
+      .order('name', { ascending: true });
+    
+    if (data) setRecipes(data);
+    if (error) console.error(error);
+  };
+
+  const [marginCalc, setMarginCalc] = useState({
+    cost: 0,
+    markup: 30, // %
+    others: 0
+  });
+
+  const [foodBank, setFoodBank] = useState<any[]>([]);
+
+  const fetchFoodBank = async () => {
+    try {
+      const { data, error } = await supabase.from('cantina_food_bank').select('*').order('expiry_date', { ascending: true });
+      if (error) throw error;
+      setFoodBank(data || []);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   useEffect(() => {
     if (!user || authLoading) return;
 
     fetchRecords();
     fetchMaterials();
+    fetchIngredients();
+    fetchRecipes();
+    fetchFoodBank();
 
     const recordsSubscription = supabase
       .channel('records_changes')
@@ -66,9 +129,15 @@ const Cantina: React.FC = () => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'cantina_materials' }, () => fetchMaterials())
       .subscribe();
 
+    const ingredientsSubscription = supabase
+      .channel('ingredients_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'cantina_ingredients' }, () => fetchIngredients())
+      .subscribe();
+
     return () => {
       supabase.removeChannel(recordsSubscription);
       supabase.removeChannel(materialsSubscription);
+      supabase.removeChannel(ingredientsSubscription);
     };
   }, [user, authLoading]);
 
@@ -120,6 +189,91 @@ const Cantina: React.FC = () => {
     }
   };
 
+  const handleAddIngredient = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const { error } = await supabase.from('cantina_ingredients').insert([newIngredient]);
+      if (error) throw error;
+      setIsIngredientModalOpen(false);
+      setNewIngredient({ name: '', stock: 0, unit: 'un', unit_cost: 0 });
+      fetchIngredients();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleAddRecipe = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const { error } = await supabase.from('cantina_recipes').insert([newRecipe]);
+      if (error) throw error;
+      setIsRecipeModalOpen(false);
+      setNewRecipe({ name: '', ingredients: [] });
+      fetchRecipes();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleProduce = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedRecipe) return;
+
+    try {
+      // 1. Check if enough ingredients
+      for (const req of selectedRecipe.ingredients) {
+        const ing = ingredients.find(i => i.id === req.ingredient_id);
+        if (!ing || ing.stock < (req.quantity * productionQuantity)) {
+          alert(`Estoque insuficiente de ${ing?.name || 'ingrediente'}`);
+          return;
+        }
+      }
+
+      // 2. Subtract ingredients
+      for (const req of selectedRecipe.ingredients) {
+        const ing = ingredients.find(i => i.id === req.ingredient_id);
+        const { error } = await supabase
+          .from('cantina_ingredients')
+          .update({ stock: ing.stock - (req.quantity * productionQuantity) })
+          .eq('id', ing.id);
+        if (error) throw error;
+      }
+
+      // 3. Add to materials stock (if same name exists)
+      const material = materials.find(m => m.name === selectedRecipe.name);
+      if (material) {
+        const { error } = await supabase
+          .from('cantina_materials')
+          .update({ stock: material.stock + productionQuantity })
+          .eq('id', material.id);
+        if (error) throw error;
+      }
+
+      setIsProductionModalOpen(false);
+      setProductionQuantity(1);
+      fetchIngredients();
+      fetchMaterials();
+      alert('Produção concluída com sucesso!');
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleAdjustIngredient = async (ing: any) => {
+    const newStock = prompt(`Ajustar estoque de ${ing.name}:`, ing.stock);
+    if (newStock === null) return;
+    try {
+      const { error } = await supabase
+        .from('cantina_ingredients')
+        .update({ stock: parseFloat(newStock) })
+        .eq('id', ing.id);
+      if (error) throw error;
+      fetchIngredients();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const totalIncome = records.filter(r => r.type === 'income').reduce((acc, r) => acc + r.amount, 0);
   const totalExpense = records.filter(r => r.type === 'expense').reduce((acc, r) => acc + r.amount, 0);
   const balance = totalIncome - totalExpense;
@@ -129,10 +283,11 @@ const Cantina: React.FC = () => {
 
   const allTabs = [
     { id: 'financeiro', label: 'Financeiro', icon: DollarSign },
-    { id: 'eventos', label: 'Eventos', icon: Calendar },
-    { id: 'movimentacao', label: 'Movimentação', icon: History },
-    { id: 'pagvendas', label: 'PagVendas', icon: CreditCard },
-    { id: 'materiais', label: 'Materiais', icon: Plus },
+    { id: 'materiais', label: 'Estoque Venda', icon: Plus },
+    { id: 'receitas', label: 'Receitas/Produção', icon: FileText },
+    { id: 'margem', label: 'Calculadora Margem', icon: TrendingUp },
+    { id: 'banco', label: 'Banco Alimentos', icon: History },
+    { id: 'movimentacao', label: 'Histórico', icon: History },
     { id: 'relatorios', label: 'Relatórios', icon: FileText },
     { id: 'configuracoes', label: 'Acesso', icon: Settings },
   ];
@@ -266,92 +421,179 @@ const Cantina: React.FC = () => {
         </div>
       )}
 
-      {activeTab === 'eventos' && (
-        <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-100 animate-in fade-in slide-in-from-bottom-2 duration-300">
-          <h2 className="text-xl font-bold mb-6">Cadastro de Eventos Extraordinários</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <div className="space-y-4">
-              <p className="text-sm text-gray-500">Registre eventos que geram movimentação financeira atípica (ex: Acampamentos, Festas Beneficentes).</p>
-              <button 
-                onClick={() => {
-                  setNewRecord({...newRecord, is_extraordinary: true, category: 'Evento Especial'});
-                  setIsModalOpen(true);
-                }}
-                className="w-full py-3 bg-purple-600 text-white rounded-lg font-bold hover:bg-purple-700 transition-all"
-              >
-                Criar Novo Evento
-              </button>
+      {activeTab === 'margem' && (
+        <div className="max-w-md mx-auto bg-white p-8 rounded-2xl shadow-sm border border-gray-100 animate-in fade-in slide-in-from-bottom-2 duration-300">
+          <h2 className="text-xl font-bold mb-6">Calculadora de Margem</h2>
+          <div className="space-y-6">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Custo do Produto (R$)</label>
+              <input 
+                type="number" 
+                className="w-full px-4 py-2 border border-gray-200 rounded-lg" 
+                value={marginCalc.cost} 
+                onChange={e => setMarginCalc({...marginCalc, cost: parseFloat(e.target.value) || 0})}
+              />
             </div>
-            <div className="bg-purple-50 p-6 rounded-xl border border-purple-100">
-              <h4 className="font-bold text-purple-900 mb-2">Próximos Eventos</h4>
-              <ul className="space-y-2 text-sm text-purple-700">
-                <li>• Festa da Primavera (15/04)</li>
-                <li>• Acampamento de Grupo (22/05)</li>
-              </ul>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Custos Fixos/Outros (R$)</label>
+              <input 
+                type="number" 
+                className="w-full px-4 py-2 border border-gray-200 rounded-lg" 
+                value={marginCalc.others} 
+                onChange={e => setMarginCalc({...marginCalc, others: parseFloat(e.target.value) || 0})}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Margem Desejada (%)</label>
+              <input 
+                type="number" 
+                className="w-full px-4 py-2 border border-gray-200 rounded-lg" 
+                value={marginCalc.markup} 
+                onChange={e => setMarginCalc({...marginCalc, markup: parseFloat(e.target.value) || 0})}
+              />
+            </div>
+
+            <div className="p-6 bg-blue-50 rounded-2xl border border-blue-100 font-sans">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-sm text-blue-900">Preço de Venda Sugerido:</span>
+                <span className="text-2xl font-bold text-blue-600">
+                  R$ {((marginCalc.cost + marginCalc.others) * (1 + marginCalc.markup / 100)).toFixed(2)}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-xs text-blue-700">
+                <span>Lucro Bruto por Unidade:</span>
+                <span className="font-bold">
+                  R$ {((marginCalc.cost + marginCalc.others) * (marginCalc.markup / 100)).toFixed(2)}
+                </span>
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {activeTab === 'movimentacao' && (
+      {activeTab === 'receitas' && (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-            <div className="p-6 border-b border-gray-100">
-              <h3 className="text-lg font-bold">Histórico de Entradas e Saídas</h3>
+          <div className="flex justify-between items-center">
+            <h2 className="text-xl font-bold">Gestão de Produção e Receitas</h2>
+            <div className="flex gap-2">
+              <button 
+                onClick={() => setIsIngredientModalOpen(true)}
+                className="flex items-center px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-200"
+              >
+                <Plus size={18} className="mr-2" /> Novo Ingrediente
+              </button>
+              <button 
+                onClick={() => setIsRecipeModalOpen(true)}
+                className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
+              >
+                <Plus size={18} className="mr-2" /> Nova Receita
+              </button>
             </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+              <div className="p-4 bg-gray-50 border-b border-gray-100 font-bold text-sm uppercase text-gray-500">Ingredientes em Estoque</div>
+              <div className="divide-y divide-gray-100 max-h-[400px] overflow-auto">
+                {ingredients.map(ing => (
+                  <div key={ing.id} className="p-4 flex justify-between items-center">
+                    <div>
+                      <p className="font-bold">{ing.name}</p>
+                      <p className="text-xs text-gray-500">{ing.stock} {ing.unit} | R$ {ing.unit_cost.toFixed(2)}/{ing.unit}</p>
+                    </div>
+                    <button 
+                      onClick={() => handleAdjustIngredient(ing)}
+                      className="text-blue-600 font-bold text-xs hover:underline"
+                    >
+                      Ajustar
+                    </button>
+                  </div>
+                ))}
+                {ingredients.length === 0 && <div className="p-8 text-center text-gray-400">Nenhum ingrediente cadastrado.</div>}
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+              <div className="p-4 bg-gray-50 border-b border-gray-100 font-bold text-sm uppercase text-gray-500">Receitas Disponíveis</div>
+              <div className="divide-y divide-gray-100">
+                {recipes.map(rec => (
+                  <div key={rec.id} className="p-4">
+                    <div className="flex justify-between items-start mb-2">
+                      <h4 className="font-bold">{rec.name}</h4>
+                      <button 
+                        onClick={() => {
+                          setSelectedRecipe(rec);
+                          setIsProductionModalOpen(true);
+                        }}
+                        className="px-3 py-1 bg-green-600 text-white text-[10px] font-bold rounded-lg uppercase"
+                      >
+                        Produzir
+                      </button>
+                    </div>
+                    <p className="text-xs text-gray-500">{rec.ingredients?.length || 0} ingredientes utilizados.</p>
+                  </div>
+                ))}
+                {recipes.length === 0 && <div className="p-8 text-center text-gray-400">Nenhuma receita cadastrada.</div>}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'banco' && (
+        <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 animate-in fade-in slide-in-from-bottom-2 duration-300">
+          <div className="flex justify-between items-center mb-6">
+            <div>
+              <h2 className="text-xl font-bold">Banco de Alimentos</h2>
+              <p className="text-sm text-gray-500">Controle de excedentes e validade.</p>
+            </div>
+            <button className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700">
+              <Plus size={18} className="mr-2" /> Adicionar Lote
+            </button>
+          </div>
+          
+          <div className="overflow-x-auto">
             <table className="w-full text-left">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Data</th>
-                  <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Descrição</th>
-                  <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Tipo</th>
-                  <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Valor</th>
+              <thead>
+                <tr className="border-b border-gray-100 text-[10px] uppercase font-bold text-gray-400 tracking-widest">
+                  <th className="px-6 py-4 font-sans">Item</th>
+                  <th className="px-6 py-4 font-sans">Quantidade</th>
+                  <th className="px-6 py-4 font-sans">Validade</th>
+                  <th className="px-6 py-4 font-sans text-right">Ação</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
-                {records.map((r) => (
-                  <tr key={r.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 text-sm text-gray-500">
-                      {r.date ? format(new Date(r.date), 'dd/MM/yyyy HH:mm') : 'Pendente'}
+              <tbody className="divide-y divide-gray-50">
+                {foodBank.map((item) => (
+                  <tr key={item.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-6 py-4 font-medium">{item.name}</td>
+                    <td className="px-6 py-4 text-sm">{item.quantity} {item.unit}</td>
+                    <td className="px-6 py-4 text-sm">
+                      <div className="flex items-center gap-2">
+                        {format(new Date(item.expiry_date), 'dd/MM/yyyy')}
+                        {new Date(item.expiry_date) < new Date() && (
+                          <span className="px-2 py-0.5 bg-red-100 text-red-600 text-[10px] font-bold uppercase rounded-full">
+                            Vencido
+                          </span>
+                        )}
+                      </div>
                     </td>
-                    <td className="px-6 py-4 font-medium text-gray-900">
-                      {r.description}
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className={cn(
-                        "px-2 py-1 rounded-full text-[10px] font-bold uppercase",
-                        r.type === 'income' ? "bg-green-100 text-green-600" : "bg-red-100 text-red-600"
-                      )}>
-                        {r.type === 'income' ? 'Entrada' : 'Saída'}
-                      </span>
-                    </td>
-                    <td className={cn(
-                      "px-6 py-4 text-right font-bold",
-                      r.type === 'income' ? "text-green-600" : "text-red-600"
-                    )}>
-                      R$ {r.amount.toFixed(2)}
+                    <td className="px-6 py-4 text-right">
+                      <button className="text-red-600 hover:bg-red-50 p-2 rounded-lg transition-colors">
+                        <Trash2 size={16} />
+                      </button>
                     </td>
                   </tr>
                 ))}
+                {foodBank.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="px-6 py-12 text-center text-gray-400">
+                      <History size={48} className="mx-auto mb-4 opacity-10" />
+                      Nenhum item no banco de alimentos.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'pagvendas' && (
-        <div className="bg-white p-12 rounded-xl shadow-sm border border-gray-100 text-center animate-in fade-in slide-in-from-bottom-2 duration-300">
-          <div className="max-w-md mx-auto">
-            <div className="w-20 h-20 bg-yellow-100 text-yellow-600 rounded-full flex items-center justify-center mx-auto mb-6">
-              <CreditCard size={40} />
-            </div>
-            <h2 className="text-2xl font-bold mb-4">Integração PagVendas</h2>
-            <p className="text-gray-500 mb-8">
-              Conecte sua conta PagVendas para sincronizar vendas da cantina automaticamente.
-            </p>
-            <button className="px-8 py-3 bg-yellow-500 text-white rounded-lg font-bold hover:bg-yellow-600 transition-all">
-              Configurar Token de API
-            </button>
           </div>
         </div>
       )}
@@ -442,7 +684,95 @@ const Cantina: React.FC = () => {
         </div>
       )}
 
-      {/* Add Record Modal */}
+      {/* Production Modal */}
+      {isProductionModalOpen && selectedRecipe && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-8 text-center">
+            <ChefHat className="mx-auto text-green-600 mb-4" size={48} />
+            <h2 className="text-xl font-bold mb-2">Produzir: {selectedRecipe.name}</h2>
+            <p className="text-sm text-gray-500 mb-6">Informe a quantidade a ser produzida.</p>
+            <form onSubmit={handleProduce} className="space-y-4">
+              <input 
+                type="number"
+                min="1"
+                className="w-full px-4 py-2 border border-gray-200 rounded-lg text-center text-2xl font-bold"
+                value={productionQuantity}
+                onChange={(e) => setProductionQuantity(parseInt(e.target.value))}
+              />
+              <div className="flex gap-3">
+                <button 
+                  type="button" 
+                  onClick={() => setIsProductionModalOpen(false)}
+                  className="flex-1 py-2 border border-gray-200 rounded-lg text-sm font-medium"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="submit"
+                  className="flex-1 py-2 bg-green-600 text-white rounded-lg text-sm font-medium"
+                >
+                  Confirmar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Ingredient Modal */}
+      {isIngredientModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8">
+            <h2 className="text-xl font-bold mb-6">Novo Ingrediente</h2>
+            <form onSubmit={handleAddIngredient} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nome</label>
+                <input required className="w-full px-4 py-2 border border-gray-200 rounded-lg" value={newIngredient.name} onChange={e => setNewIngredient({...newIngredient, name: e.target.value})} />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Unidade</label>
+                  <select className="w-full px-4 py-2 border border-gray-200 rounded-lg" value={newIngredient.unit} onChange={e => setNewIngredient({...newIngredient, unit: e.target.value})}>
+                    <option value="un">Unidade</option>
+                    <option value="kg">Quilo</option>
+                    <option value="g">Grama</option>
+                    <option value="l">Litro</option>
+                    <option value="ml">Mililitro</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Custo (R$)</label>
+                  <input type="number" step="0.01" className="w-full px-4 py-2 border border-gray-200 rounded-lg" value={newIngredient.unit_cost} onChange={e => setNewIngredient({...newIngredient, unit_cost: parseFloat(e.target.value)})} />
+                </div>
+              </div>
+              <div className="flex gap-3">
+                <button type="button" onClick={() => setIsIngredientModalOpen(false)} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm font-medium">Cancelar</button>
+                <button type="submit" className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium">Salvar</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Recipe Modal */}
+      {isRecipeModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8">
+            <h2 className="text-xl font-bold mb-6">Nova Receita</h2>
+            <form onSubmit={handleAddRecipe} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nome da Receita</label>
+                <input required className="w-full px-4 py-2 border border-gray-200 rounded-lg" value={newRecipe.name} onChange={e => setNewRecipe({...newRecipe, name: e.target.value})} />
+              </div>
+              <div className="flex gap-3">
+                <button type="button" onClick={() => setIsRecipeModalOpen(false)} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm font-medium">Cancelar</button>
+                <button type="submit" className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium" disabled={newRecipe.name === ''}>Próximo</button>
+              </div>
+              <p className="text-[10px] text-gray-400 italic">* Adição de ingredientes por receita será habilitada em breve no banco de dados.</p>
+            </form>
+          </div>
+        </div>
+      )}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8">

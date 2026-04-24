@@ -18,21 +18,25 @@ import { cn } from '../lib/utils';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useAuth } from '../AuthContext';
+import Barcode from 'react-barcode';
+import Logo from '../components/Logo';
 
 interface Asset {
   id: string;
   name: string;
+  barcode?: string;
   description: string;
   value: number;
   status: 'active' | 'disposed' | 'pending_approval';
   justification?: string;
+  branch: 'Lobinho' | 'Escoteiro' | 'Senior' | 'Pioneiro' | 'Grupo';
   date_acquired: string;
   date_disposed?: string;
 }
 
 const Inventory: React.FC = () => {
   const { user, profile, loading: authLoading } = useAuth();
-  const [activeTab, setActiveTab] = useState<'ativos' | 'demandas' | 'baixas' | 'relatorios'>('ativos');
+  const [activeTab, setActiveTab] = useState<'ativos' | 'demandas' | 'etiquetas' | 'baixas' | 'relatorios'>('ativos');
   const [assets, setAssets] = useState<Asset[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -42,10 +46,16 @@ const Inventory: React.FC = () => {
 
   const [newAsset, setNewAsset] = useState({
     name: '',
+    barcode: '',
     description: '',
     value: 0,
+    branch: 'Grupo' as Asset['branch'],
     status: 'pending_approval' as 'pending_approval'
   });
+
+  const generateBarcode = () => {
+    return Math.floor(1000000000000 + Math.random() * 9000000000000).toString();
+  };
 
   useEffect(() => {
     if (!user || authLoading) return;
@@ -75,11 +85,12 @@ const Inventory: React.FC = () => {
   const handleAddAsset = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const { error } = await supabase.from('assets').insert([newAsset]);
+      const barcode = newAsset.barcode || generateBarcode();
+      const { error } = await supabase.from('assets').insert([{ ...newAsset, barcode }]);
       if (error) throw error;
       
       setIsModalOpen(false);
-      setNewAsset({ name: '', description: '', value: 0, status: 'pending_approval' });
+      setNewAsset({ name: '', barcode: '', description: '', value: 0, branch: 'Grupo', status: 'pending_approval' });
       fetchAssets();
     } catch (err) {
       console.error(err);
@@ -133,6 +144,7 @@ const Inventory: React.FC = () => {
   const allTabs = [
     { id: 'ativos', label: 'Gestão de Ativos', icon: Box },
     { id: 'demandas', label: 'Fluxo de Novas Demandas', icon: ClipboardCheck },
+    { id: 'etiquetas', label: 'Etiquetas', icon: FileText },
     { id: 'baixas', label: 'Baixa de Ativos', icon: Trash2 },
     { id: 'relatorios', label: 'Relatórios de Inventário', icon: FileText },
   ];
@@ -274,6 +286,43 @@ const Inventory: React.FC = () => {
         </div>
       )}
 
+      {activeTab === 'etiquetas' && (
+        <div className="space-y-6">
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center print:hidden">
+            <div>
+              <h3 className="text-lg font-bold">Impressão de Etiquetas de Ativos</h3>
+              <p className="text-sm text-gray-500">Gere etiquetas com QR/Barcode e logo para cada ramo.</p>
+            </div>
+            <button 
+              onClick={() => window.print()}
+              className="px-6 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition-all"
+            >
+              Imprimir Selecionados
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+            {assets.filter(a => a.status === 'active').map((asset) => (
+              <div key={asset.id} className="bg-white p-4 border border-gray-200 rounded-xl flex flex-col items-center text-center shadow-sm">
+                <Logo size={48} branch={asset.branch} className="mb-2" />
+                <span className="text-[10px] font-black uppercase text-gray-400 tracking-widest mb-1">{asset.branch}</span>
+                <span className="font-bold text-xs mb-2 leading-tight h-8 flex items-center">{asset.name}</span>
+                {asset.barcode && (
+                  <div className="mt-auto">
+                    <Barcode 
+                      value={asset.barcode} 
+                      height={30} 
+                      width={1.2} 
+                      fontSize={8} 
+                      margin={0}
+                    />
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {activeTab === 'baixas' && (
         <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-100 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <div className="max-w-2xl mx-auto">
@@ -355,15 +404,42 @@ const Inventory: React.FC = () => {
                   onChange={(e) => setNewAsset({...newAsset, description: e.target.value})}
                 />
               </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Valor Estimado (R$)</label>
+                  <input 
+                    required
+                    type="number"
+                    step="0.01"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                    value={newAsset.value}
+                    onChange={(e) => setNewAsset({...newAsset, value: parseFloat(e.target.value)})}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Ramo</label>
+                  <select 
+                    required
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                    value={newAsset.branch}
+                    onChange={(e) => setNewAsset({...newAsset, branch: e.target.value as any})}
+                  >
+                    <option value="Grupo">Grupo</option>
+                    <option value="Lobinho">Lobinho</option>
+                    <option value="Escoteiro">Escoteiro</option>
+                    <option value="Senior">Senior</option>
+                    <option value="Pioneiro">Pioneiro</option>
+                  </select>
+                </div>
+              </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Valor Estimado (R$)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Cód. Barras (Opcional)</label>
                 <input 
-                  required
-                  type="number"
-                  step="0.01"
+                  type="text"
+                  placeholder="Gerado se vazio"
                   className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                  value={newAsset.value}
-                  onChange={(e) => setNewAsset({...newAsset, value: parseFloat(e.target.value)})}
+                  value={newAsset.barcode}
+                  onChange={(e) => setNewAsset({...newAsset, barcode: e.target.value})}
                 />
               </div>
               <div className="flex gap-3 pt-4">

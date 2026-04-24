@@ -12,19 +12,25 @@ import {
   ShoppingBag,
   History,
   TrendingUp,
-  Settings
+  Settings,
+  Pencil,
+  Trash2
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { useAuth } from '../AuthContext';
 import Barcode from 'react-barcode';
 import { cn } from '../lib/utils';
 import { format } from 'date-fns';
+import Logo from '../components/Logo';
 
 interface Product {
   id: string;
   barcode: string;
   name: string;
-  price: number;
+  size?: string;
+  purchase_price?: number;
+  sale_price?: number;
+  price: number; // For compatibility with existing code
   stock: number;
   category: string;
   min_stock?: number;
@@ -46,11 +52,15 @@ const Lojinha: React.FC = () => {
   const [quantity, setQuantity] = useState(1);
   const [scannedItems, setScannedItems] = useState<Record<string, number>>({});
   const [scanInput, setScanInput] = useState('');
+  const [isEditing, setIsEditing] = useState(false);
 
   // New Product Form
   const [newProduct, setNewProduct] = useState({
     name: '',
     barcode: '',
+    size: '',
+    purchase_price: 0,
+    sale_price: 0,
     price: 0,
     stock: 0,
     category: 'Uniforme',
@@ -59,8 +69,8 @@ const Lojinha: React.FC = () => {
   });
 
   const generateBarcode = () => {
-    // Generate a 12-digit numeric string (EAN-13 style without checksum for simplicity)
-    return Math.floor(100000000000 + Math.random() * 900000000000).toString();
+    // Generate a 13-digit numeric string
+    return Math.floor(1000000000000 + Math.random() * 9000000000000).toString();
   };
 
   // New Demand Form
@@ -119,17 +129,80 @@ const Lojinha: React.FC = () => {
   const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const barcode = newProduct.barcode || generateBarcode();
+      const pPrice = newProduct.purchase_price || 0;
+      let sPrice = newProduct.sale_price;
+
+      // If sale price not provided, set it to 5% above purchase price
+      if (!sPrice || sPrice === 0) {
+        sPrice = Math.round(pPrice * 1.05 * 100) / 100;
+      }
+
       const productToInsert = {
         ...newProduct,
-        barcode: newProduct.barcode || generateBarcode()
+        barcode,
+        purchase_price: pPrice,
+        sale_price: sPrice,
+        price: sPrice // Keep compatibility
       };
-      
+
       const { error } = await supabase.from('products').insert([productToInsert]);
       if (error) throw error;
       
       setIsAddModalOpen(false);
-      setNewProduct({ name: '', barcode: '', price: 0, stock: 0, category: 'Uniforme', min_stock: 5, max_stock: 50 });
+      setNewProduct({ 
+        name: '', 
+        barcode: '', 
+        size: '',
+        purchase_price: 0,
+        sale_price: 0,
+        price: 0, 
+        stock: 0, 
+        category: 'Uniforme',
+        min_stock: 5,
+        max_stock: 50
+      });
       setActiveTab('estoque');
+      fetchData();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleUpdateProduct = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedProduct) return;
+    try {
+      const pPrice = newProduct.purchase_price || 0;
+      let sPrice = newProduct.sale_price;
+      if (!sPrice || sPrice === 0) sPrice = Math.round(pPrice * 1.05 * 100) / 100;
+
+      const { error } = await supabase
+        .from('products')
+        .update({
+          ...newProduct,
+          purchase_price: pPrice,
+          sale_price: sPrice,
+          price: sPrice
+        })
+        .eq('id', selectedProduct.id);
+      
+      if (error) throw error;
+      
+      setIsAddModalOpen(false);
+      setIsEditing(false);
+      setSelectedProduct(null);
+      fetchData();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteProduct = async (id: string) => {
+    if (!window.confirm('Tem certeza que deseja excluir este produto?')) return;
+    try {
+      const { error } = await supabase.from('products').delete().eq('id', id);
+      if (error) throw error;
       fetchData();
     } catch (err) {
       console.error(err);
@@ -255,12 +328,10 @@ const Lojinha: React.FC = () => {
         <div className="grid grid-cols-4 gap-4">
           {filteredProducts.map(product => (
             <div key={product.id} className="flex flex-col items-center p-3 border border-gray-300 rounded-lg bg-white text-black shadow-sm">
-              {/* Logo Placeholder */}
-              <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center mb-2">
-                <span className="text-white text-[10px] font-black">GESCS</span>
-              </div>
-              <span className="font-bold text-[10px] uppercase text-center leading-tight mb-1 h-6 flex items-center">
-                {product.name}
+              <Logo size={48} className="mb-2" />
+              <span className="font-bold text-[10px] uppercase text-center leading-tight h-8 flex flex-col items-center">
+                <span>{product.name}</span>
+                {product.size && <span className="text-gray-500 font-normal">Tam: {product.size}</span>}
               </span>
               <span className="font-black text-sm mb-2 text-blue-700">
                 R$ {product.price.toFixed(2)}
@@ -268,8 +339,8 @@ const Lojinha: React.FC = () => {
               <div className="bg-white p-1 rounded">
                 <Barcode 
                   value={product.barcode} 
-                  height={35} 
-                  width={1.2} 
+                  height={30} 
+                  width={1.1} 
                   fontSize={8} 
                   margin={0}
                 />
@@ -384,6 +455,36 @@ const Lojinha: React.FC = () => {
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex gap-2">
+                        <button 
+                          onClick={() => {
+                            setSelectedProduct(product);
+                            setNewProduct({
+                              name: product.name,
+                              barcode: product.barcode,
+                              size: product.size || '',
+                              purchase_price: product.purchase_price || 0,
+                              sale_price: product.sale_price || 0,
+                              price: product.price,
+                              stock: product.stock,
+                              category: product.category,
+                              min_stock: product.min_stock || 5,
+                              max_stock: product.max_stock || 50
+                            });
+                            setIsEditing(true);
+                            setIsAddModalOpen(true);
+                          }}
+                          className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg"
+                          title="Editar"
+                        >
+                          <Pencil size={18} />
+                        </button>
+                        <button 
+                          onClick={() => handleDeleteProduct(product.id)}
+                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
+                          title="Excluir"
+                        >
+                          <Trash2 size={18} />
+                        </button>
                         <button 
                           onClick={() => {
                             setSelectedProduct(product);
@@ -510,26 +611,71 @@ const Lojinha: React.FC = () => {
           <div className="max-w-2xl mx-auto">
             <h2 className="text-xl font-bold mb-6">Ingestão de Dados Cadastrais</h2>
             <form onSubmit={handleAddProduct} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Nome do Material/Produto</label>
-                <input 
-                  required
-                  type="text"
-                  className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                  value={newProduct.name}
-                  onChange={(e) => setNewProduct({...newProduct, name: e.target.value})}
-                />
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Nome</label>
+                  <input 
+                    required
+                    type="text"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                    value={newProduct.name}
+                    onChange={(e) => setNewProduct({...newProduct, name: e.target.value})}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Tamanho</label>
+                  <input 
+                    type="text"
+                    placeholder="Ex: P, G, 42..."
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                    value={newProduct.size}
+                    onChange={(e) => setNewProduct({...newProduct, size: e.target.value})}
+                  />
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Código de Barras (Opcional)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Custo de Compra (R$)</label>
                   <input 
-                    type="text"
-                    placeholder="Gerado automaticamente se vazio"
-                    className="w-full px-4 py-2 border border-gray-200 rounded-lg bg-gray-50"
-                    value={newProduct.barcode}
-                    onChange={(e) => setNewProduct({...newProduct, barcode: e.target.value})}
+                    required
+                    type="number"
+                    step="0.01"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                    value={newProduct.purchase_price}
+                    onChange={(e) => setNewProduct({...newProduct, purchase_price: parseFloat(e.target.value)})}
                   />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Valor de Venda (R$)</label>
+                  <input 
+                    type="number"
+                    step="0.01"
+                    placeholder="Opcional (+5% se vazio)"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                    value={newProduct.sale_price}
+                    onChange={(e) => setNewProduct({...newProduct, sale_price: parseFloat(e.target.value)})}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Código de Barras</label>
+                  <div className="relative">
+                    <input 
+                      type="text"
+                      placeholder="Deixe vazio para gerar"
+                      className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                      value={newProduct.barcode}
+                      onChange={(e) => setNewProduct({...newProduct, barcode: e.target.value})}
+                    />
+                    <button 
+                      type="button"
+                      onClick={() => setNewProduct({...newProduct, barcode: generateBarcode()})}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-blue-600 hover:bg-blue-50 rounded"
+                    >
+                      <BarcodeIcon size={18} />
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Categoria</label>
@@ -545,20 +691,9 @@ const Lojinha: React.FC = () => {
                   </select>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Preço de Venda (R$)</label>
-                  <input 
-                    required
-                    type="number"
-                    step="0.01"
-                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                    value={newProduct.price}
-                    onChange={(e) => setNewProduct({...newProduct, price: parseFloat(e.target.value)})}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Estoque Inicial</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Inicial</label>
                   <input 
                     required
                     type="number"
@@ -567,10 +702,8 @@ const Lojinha: React.FC = () => {
                     onChange={(e) => setNewProduct({...newProduct, stock: parseInt(e.target.value)})}
                   />
                 </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Mínimo (Alerta)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Mín.</label>
                   <input 
                     required
                     type="number"
@@ -580,7 +713,7 @@ const Lojinha: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Máximo (Alerta)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Máx.</label>
                   <input 
                     required
                     type="number"
@@ -744,28 +877,73 @@ const Lojinha: React.FC = () => {
       {isAddModalOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8">
-            <h2 className="text-xl font-bold mb-6">Cadastrar Novo Produto</h2>
-            <form onSubmit={handleAddProduct} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Nome</label>
-                <input 
-                  required
-                  type="text"
-                  className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                  value={newProduct.name}
-                  onChange={(e) => setNewProduct({...newProduct, name: e.target.value})}
-                />
+            <h2 className="text-xl font-bold mb-6">{isEditing ? 'Editar Produto' : 'Cadastrar Novo Produto'}</h2>
+            <form onSubmit={isEditing ? handleUpdateProduct : handleAddProduct} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Nome</label>
+                  <input 
+                    required
+                    type="text"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                    value={newProduct.name}
+                    onChange={(e) => setNewProduct({...newProduct, name: e.target.value})}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Tamanho</label>
+                  <input 
+                    type="text"
+                    placeholder="Ex: P, G, 42..."
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                    value={newProduct.size}
+                    onChange={(e) => setNewProduct({...newProduct, size: e.target.value})}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Custo de Compra (R$)</label>
+                  <input 
+                    required
+                    type="number"
+                    step="0.01"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                    value={newProduct.purchase_price}
+                    onChange={(e) => setNewProduct({...newProduct, purchase_price: parseFloat(e.target.value)})}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Valor de Venda (R$)</label>
+                  <input 
+                    type="number"
+                    step="0.01"
+                    placeholder="Opcional (+5% se vazio)"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                    value={newProduct.sale_price}
+                    onChange={(e) => setNewProduct({...newProduct, sale_price: parseFloat(e.target.value)})}
+                  />
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Código de Barras</label>
-                  <input 
-                    type="text"
-                    placeholder="Gerado automaticamente"
-                    className="w-full px-4 py-2 border border-gray-200 rounded-lg bg-gray-50"
-                    value={newProduct.barcode}
-                    onChange={(e) => setNewProduct({...newProduct, barcode: e.target.value})}
-                  />
+                  <div className="relative">
+                    <input 
+                      type="text"
+                      placeholder="Deixe vazio para gerar"
+                      className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                      value={newProduct.barcode}
+                      onChange={(e) => setNewProduct({...newProduct, barcode: e.target.value})}
+                    />
+                    <button 
+                      type="button"
+                      onClick={() => setNewProduct({...newProduct, barcode: generateBarcode()})}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-blue-600 hover:bg-blue-50 rounded"
+                    >
+                      <BarcodeIcon size={18} />
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Categoria</label>
@@ -781,20 +959,9 @@ const Lojinha: React.FC = () => {
                   </select>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Preço (R$)</label>
-                  <input 
-                    required
-                    type="number"
-                    step="0.01"
-                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                    value={newProduct.price}
-                    onChange={(e) => setNewProduct({...newProduct, price: parseFloat(e.target.value)})}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Estoque Inicial</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Inicial</label>
                   <input 
                     required
                     type="number"
@@ -803,10 +970,8 @@ const Lojinha: React.FC = () => {
                     onChange={(e) => setNewProduct({...newProduct, stock: parseInt(e.target.value)})}
                   />
                 </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Mínimo</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Mín.</label>
                   <input 
                     required
                     type="number"
@@ -816,7 +981,7 @@ const Lojinha: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Máximo</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Máx.</label>
                   <input 
                     required
                     type="number"

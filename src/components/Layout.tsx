@@ -15,11 +15,13 @@ import {
   Eye,
   EyeOff,
   AlertCircle,
-  CheckCircle2
+  CheckCircle2,
+  DollarSign
 } from 'lucide-react';
 import { useAuth } from '../AuthContext';
 import { cn } from '../lib/utils';
 import { supabase } from '../supabase';
+import Logo from './Logo';
 
 const Layout: React.FC = () => {
   const { profile, logout } = useAuth();
@@ -82,18 +84,21 @@ const Layout: React.FC = () => {
   if (isGeral || role.includes('lojinha')) {
     navigation.push({ name: '1. Lojinha', href: '/lojinha', icon: Store });
   }
-  if (isGeral || role.includes('cantina') || role.includes('financeiro')) {
-    navigation.push({ name: '2. Cantina & Financeiro', href: '/cantina', icon: Coffee });
+  if (isGeral || role.includes('cantina')) {
+    navigation.push({ name: '2. Cantina', href: '/cantina', icon: Coffee });
+  }
+  if (isGeral || role.includes('financeiro')) {
+    navigation.push({ name: '3. Financeiro', href: '/financeiro', icon: DollarSign });
   }
   if (isGeral || role.includes('scout')) {
-    navigation.push({ name: '3. Escoteiros', href: '/scouts', icon: Users });
+    navigation.push({ name: '4. Escoteiros', href: '/scouts', icon: Users });
   }
   if (isGeral || role.includes('ativos')) {
-    navigation.push({ name: '4. Inventário', href: '/inventory', icon: Package });
+    navigation.push({ name: '5. Inventário', href: '/inventory', icon: Package });
   }
 
   if (role.startsWith('admin_')) {
-    navigation.push({ name: '5. Usuários', href: '/users', icon: Settings });
+    navigation.push({ name: '6. Usuários', href: '/users', icon: Settings });
   }
 
   return (
@@ -104,7 +109,10 @@ const Layout: React.FC = () => {
         isSidebarOpen ? "w-64" : "w-20"
       )}>
         <div className="p-6 flex items-center justify-between">
-          {isSidebarOpen && <span className="font-bold text-xl text-blue-600">GESCS Admin</span>}
+          <div className="flex items-center gap-2">
+            <Logo size={40} />
+            {isSidebarOpen && <span className="font-bold text-xl text-blue-600">GESCS Admin</span>}
+          </div>
           <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-1 hover:bg-gray-100 rounded">
             {isSidebarOpen ? <X size={20} /> : <Menu size={20} />}
           </button>

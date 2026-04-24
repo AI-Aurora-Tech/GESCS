@@ -64,11 +64,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const contentType = response.headers.get("content-type");
         if (contentType && contentType.indexOf("application/json") !== -1) {
           const data = await response.json();
-          
           setProfile(data as UserProfile);
           return;
         } else {
-          console.error("API returned non-JSON response");
+          const text = await response.text();
+          console.error("API returned non-JSON response:", text.substring(0, 100));
         }
       }
 

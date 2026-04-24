@@ -168,8 +168,13 @@ async function startServer() {
   });
 
   // API Route to fetch a user profile
-  app.get("/api/users/profile/:uid", async (req, res) => {
+  app.get("/api/users/profile/:uid?", async (req, res) => {
     const { uid } = req.params;
+    
+    if (!uid || uid === 'undefined' || uid === 'null') {
+      return res.status(400).json({ error: "Invalid or missing UID" });
+    }
+
     try {
       const { data, error } = await supabaseAdmin
         .from("profiles")

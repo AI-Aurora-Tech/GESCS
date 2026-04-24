@@ -5,7 +5,9 @@ import Layout from './components/Layout';
 import Lojinha from './pages/Lojinha';
 import Cantina from './pages/Cantina';
 import Scouts from './pages/Scouts';
+import Financeiro from './pages/Financeiro';
 import Inventory from './pages/Inventory';
+import ScoutAI from './pages/ScoutAI';
 import Dashboard from './pages/Dashboard';
 import Login from './pages/Login';
 import Users from './pages/Users';
@@ -44,7 +46,8 @@ const App: React.FC = () => {
           }>
             <Route index element={<Dashboard />} />
             <Route path="lojinha" element={<ProtectedRoute allowedRoles={['lojinha']}><Lojinha /></ProtectedRoute>} />
-            <Route path="cantina" element={<ProtectedRoute allowedRoles={['cantina', 'financeiro']}><Cantina /></ProtectedRoute>} />
+            <Route path="cantina" element={<ProtectedRoute allowedRoles={['cantina', 'financeiro', 'admin_']}><Cantina /></ProtectedRoute>} />
+            <Route path="financeiro" element={<ProtectedRoute allowedRoles={['financeiro', 'admin_']}><Financeiro /></ProtectedRoute>} />
             <Route path="scouts" element={<ProtectedRoute allowedRoles={['scout']}><Scouts /></ProtectedRoute>} />
             <Route path="inventory" element={<ProtectedRoute allowedRoles={['ativos']}><Inventory /></ProtectedRoute>} />
             <Route path="users" element={<ProtectedRoute allowedRoles={['admin_']}><Users /></ProtectedRoute>} />

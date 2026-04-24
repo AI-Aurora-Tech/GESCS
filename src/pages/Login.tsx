@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../AuthContext';
 import { Navigate } from 'react-router-dom';
 import { LogIn, User as UserIcon, Lock, AlertCircle, Eye, EyeOff } from 'lucide-react';
+import Logo from '../components/Logo';
 
 const Login: React.FC = () => {
   const { user, login } = useAuth();
@@ -39,8 +40,8 @@ const Login: React.FC = () => {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
       <div className="max-w-md w-full bg-white rounded-3xl shadow-2xl p-10 text-center border border-slate-100">
-        <div className="w-24 h-24 bg-blue-600 rounded-3xl flex items-center justify-center mx-auto mb-8 shadow-xl shadow-blue-200 rotate-6 transform transition-transform hover:rotate-0">
-          <span className="text-white text-4xl font-black -rotate-6">G</span>
+        <div className="flex justify-center mb-8">
+          <Logo size={96} />
         </div>
         <h1 className="text-3xl font-black text-slate-900 mb-2 tracking-tight">GESCS Management</h1>
         <p className="text-slate-500 mb-10 font-medium">Sistema Integrado de Gestão do Grupo Escoteiro</p>
