@@ -271,8 +271,21 @@ const Lojinha: React.FC = () => {
 
   const handleDeleteProduct = async (id: string) => {
     if (!window.confirm('Tem certeza que deseja excluir este produto? Todo o histórico de movimentação também será removido.')) return;
+    console.log('Iniciando exclusão do produto:', id);
     try {
-      // 1. Limpar transações de estoque vinculadas
+      // 1. Limpar demandas vinculadas (Opcional, lidando com possível falta da coluna)
+      try {
+        const { error: demError } = await supabase.from('lojinha_demands').delete().eq('product_id', id);
+        if (demError && demError.message.includes('column "product_id" does not exist')) {
+          console.warn('Tabela lojinha_demands não possui product_id. Pulando limpeza de demandas.');
+        } else if (demError) {
+          console.error('Erro ao limpar demandas:', demError);
+        }
+      } catch (e) {
+        console.warn('Erro ao tentar deletar de lojinha_demands:', e);
+      }
+
+      // 2. Limpar transações de estoque vinculadas
       const { error: transError } = await supabase.from('stock_transactions').delete().eq('product_id', id);
       if (transError) {
         console.error('Erro ao limpar transações:', transError);
@@ -280,7 +293,7 @@ const Lojinha: React.FC = () => {
         return;
       }
       
-      // 2. Deletar o produto
+      // 3. Deletar o produto
       const { error: prodError } = await supabase.from('products').delete().eq('id', id);
       
       if (prodError) {
@@ -289,7 +302,8 @@ const Lojinha: React.FC = () => {
         return;
       }
       
-      fetchData();
+      console.log('Produto excluído com sucesso do banco de dados');
+      await fetchData();
       alert('Produto e histórico removidos com sucesso.');
     } catch (err) {
       console.error('Exceção ao excluir:', err);
@@ -348,6 +362,7 @@ const Lojinha: React.FC = () => {
         const { error: demandError } = await supabase
           .from('lojinha_demands')
           .insert([{
+            product_id: selectedProduct.id,
             title: `Reposição Urgente: ${selectedProduct.name}${selectedProduct.size ? ` (${selectedProduct.size})` : ''}`,
             description: `O estoque atingiu ${newStock} unidades (Mínimo: ${selectedProduct.min_stock || 0}). Necessário realizar compra para atender demanda.`,
             priority: newStock < 0 ? 'Alta' : 'Média',
