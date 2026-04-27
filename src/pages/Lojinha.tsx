@@ -14,7 +14,9 @@ import {
   TrendingUp,
   Settings,
   Pencil,
-  Trash2
+  Trash2,
+  Minus,
+  X
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { useAuth } from '../AuthContext';
@@ -55,6 +57,8 @@ const Lojinha: React.FC = () => {
   const [scannedItems, setScannedItems] = useState<Record<string, number>>({});
   const [scanInput, setScanInput] = useState('');
   const [isEditing, setIsEditing] = useState(false);
+  const [showPrintModal, setShowPrintModal] = useState(false);
+  const [printQuantities, setPrintQuantities] = useState<Record<string, number>>({});
 
   // New Product Form
   const [newProduct, setNewProduct] = useState({
@@ -260,13 +264,10 @@ const Lojinha: React.FC = () => {
   };
 
   const printSpecificLabels = (product: Product, quantity: number) => {
-    // We can't easily trigger a "partial" print without complex CSS media queries
-    // So we'll set the selected items to just this one temporarily and trigger print
     setSelectedProductIds(new Set([product.id]));
-    setTimeout(() => {
-      window.print();
-      setShowRestockSuggest(false);
-    }, 100);
+    setPrintQuantities({ [product.id]: Math.min(product.stock, quantity) });
+    setShowRestockSuggest(false);
+    window.print();
   };
 
   const handleDeleteProduct = async (id: string) => {
@@ -429,26 +430,29 @@ const Lojinha: React.FC = () => {
     <>
       <div className="hidden print:block p-4">
         <div className="grid grid-cols-4 gap-4">
-          {products.filter(p => selectedProductIds.has(p.id)).map(product => (
-            <div key={product.id} className="flex flex-col items-center p-3 border border-gray-300 rounded-lg bg-white text-black shadow-sm">
-              <Logo size={48} className="mb-2" />
-              <span className="font-bold text-[10px] uppercase text-center leading-tight h-8 flex flex-col items-center">
-                <span>{product.name}{product.size ? ` (${product.size})` : ''}</span>
-              </span>
-              <span className="font-black text-sm mb-2 text-blue-700">
-                R$ {product.price.toFixed(2)}
-              </span>
-              <div className="bg-white p-1 rounded">
-                <Barcode 
-                  value={product.barcode} 
-                  height={30} 
-                  width={1.1} 
-                  fontSize={8} 
-                  margin={0}
-                />
+          {products.filter(p => selectedProductIds.has(p.id)).flatMap(product => {
+            const qty = printQuantities[product.id] || 1;
+            return Array.from({ length: qty }).map((_, idx) => (
+              <div key={`${product.id}-${idx}`} className="flex flex-col items-center p-3 border border-gray-300 rounded-lg bg-white text-black shadow-sm break-inside-avoid">
+                <Logo size={48} className="mb-2" />
+                <span className="font-bold text-[10px] uppercase text-center leading-tight h-8 flex flex-col items-center">
+                  <span>{product.name}{product.size ? ` (${product.size})` : ''}</span>
+                </span>
+                <span className="font-black text-sm mb-2 text-blue-700">
+                  R$ {product.price.toFixed(2)}
+                </span>
+                <div className="bg-white p-1 rounded">
+                  <Barcode 
+                    value={product.barcode} 
+                    height={30} 
+                    width={1.1} 
+                    fontSize={8} 
+                    margin={0}
+                  />
+                </div>
               </div>
-            </div>
-          ))}
+            ));
+          })}
         </div>
       </div>
 
@@ -509,7 +513,15 @@ const Lojinha: React.FC = () => {
                   alert("Por favor, selecione ao menos um produto para imprimir etiquetas.");
                   return;
                 }
-                window.print();
+                const initialQty: Record<string, number> = {};
+                selectedProductIds.forEach(id => {
+                  const product = products.find(p => p.id === id);
+                  if (product) {
+                    initialQty[id] = product.stock > 0 ? 1 : 0;
+                  }
+                });
+                setPrintQuantities(initialQty);
+                setShowPrintModal(true);
               }}
               className="flex items-center px-4 py-2 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg font-medium transition-colors"
             >
@@ -646,7 +658,8 @@ const Lojinha: React.FC = () => {
                         <button 
                           onClick={() => {
                             setSelectedProductIds(new Set([product.id]));
-                            setTimeout(() => window.print(), 100);
+                            setPrintQuantities({ [product.id]: product.stock > 0 ? 1 : 0 });
+                            setShowPrintModal(true);
                           }}
                           className="p-2 text-gray-500 hover:bg-gray-50 rounded-lg"
                           title="Imprimir Etiqueta"
@@ -1337,6 +1350,76 @@ const Lojinha: React.FC = () => {
           </div>
         </div>
       )}
+      {/* Print Quantity Modal */}
+      {showPrintModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 print:hidden">
+          <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+              <h2 className="font-bold text-gray-900 flex items-center">
+                <BarcodeIcon className="mr-2 h-5 w-5 text-gray-400" />
+                Quantidade de Etiquetas
+              </h2>
+              <button onClick={() => setShowPrintModal(false)} className="text-gray-400 hover:text-gray-600">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto max-h-[60vh] space-y-4">
+              <p className="text-sm text-gray-500 mb-4">
+                Defina a quantidade de etiquetas que deseja imprimir para cada produto selecionado.
+              </p>
+              {products.filter(p => selectedProductIds.has(p.id)).map(product => (
+                <div key={product.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100">
+                  <div className="flex-1">
+                    <p className="font-bold text-sm text-gray-900">{product.name} {product.size ? `(${product.size})` : ''}</p>
+                    <p className="text-xs text-gray-500">{product.barcode} • R$ {product.price.toFixed(2)}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => setPrintQuantities(prev => ({...prev, [product.id]: Math.max(0, (prev[product.id] || 0) - 1)}))}
+                      disabled={(printQuantities[product.id] || 0) <= 0}
+                      className="w-8 h-8 rounded bg-white border border-gray-200 flex items-center justify-center hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Minus size={14} />
+                    </button>
+                    <span className="w-8 text-center font-bold text-sm">{printQuantities[product.id] || 0}</span>
+                    <button 
+                      onClick={() => setPrintQuantities(prev => ({...prev, [product.id]: Math.min(product.stock, (prev[product.id] || 0) + 1)}))}
+                      disabled={(printQuantities[product.id] || 0) >= product.stock}
+                      className="w-8 h-8 rounded bg-white border border-gray-200 flex items-center justify-center hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Plus size={14} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="p-4 border-t border-gray-100 flex gap-3">
+              <button 
+                onClick={() => setShowPrintModal(false)}
+                className="flex-1 py-2 bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-xl font-medium transition-colors"
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={() => {
+                  const checkHasTags = products.filter(p => selectedProductIds.has(p.id)).reduce((acc, p) => acc + (printQuantities[p.id] || 0), 0);
+                  if (checkHasTags === 0) {
+                      alert("A quantidade total de etiquetas não pode ser zero.");
+                      return;
+                  }
+                  window.print();
+                  setShowPrintModal(false);
+                }}
+                className="flex-1 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-xl font-medium transition-colors flex items-center justify-center"
+              >
+                <BarcodeIcon className="h-4 w-4 mr-2" />
+                Imprimir agora
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
     </>
   );
