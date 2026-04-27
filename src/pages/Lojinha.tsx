@@ -270,18 +270,24 @@ const Lojinha: React.FC = () => {
   };
 
   const handleDeleteProduct = async (id: string) => {
-    if (!window.confirm('Tem certeza que deseja excluir este produto?')) return;
+    if (!window.confirm('Tem certeza que deseja excluir este produto? Todo o histórico de movimentação e etiquetas vinculadas também serão removidos.')) return;
     try {
+      // 1. Limpar transações de estoque vinculadas
+      await supabase.from('stock_transactions').delete().eq('product_id', id);
+      
+      // 2. Limpar demandas/alertas vinculados
+      await supabase.from('lojinha_demands').delete().eq('product_id', id);
+
+      // 3. Deletar o produto
       const { error } = await supabase.from('products').delete().eq('id', id);
+      
       if (error) {
-        if (error.code === '23503') {
-          alert('Não é possível excluir um produto que possui histórico de movimentação. Tente zerar o estoque em vez disso.');
-        } else {
-          alert('Erro ao excluir produto: ' + error.message);
-        }
+        alert('Erro ao excluir produto: ' + error.message);
         throw error;
       }
+      
       fetchData();
+      alert('Produto e histórico removidos com sucesso.');
     } catch (err) {
       console.error(err);
     }
