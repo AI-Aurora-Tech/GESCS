@@ -97,19 +97,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           });
           
           if (createResponse.ok) {
-            // Fetch it again after creation via API
-            const fetchAgain = await fetch(`/api/users/profile/${id}`);
-            if (fetchAgain.ok) {
-              const newData = await fetchAgain.json();
-              setProfile(newData as UserProfile);
+            const createContentType = createResponse.headers.get("content-type");
+            if (createContentType && createContentType.includes("application/json")) {
+              // Fetch it again after creation via API
+              const fetchAgain = await fetch(`/api/users/profile/${id}`);
+              if (fetchAgain.ok) {
+                const fetchContentType = fetchAgain.headers.get("content-type");
+                if (fetchContentType && fetchContentType.includes("application/json")) {
+                  const newData = await fetchAgain.json();
+                  setProfile(newData as UserProfile);
+                } else {
+                  setProfile({
+                    id: id,
+                    email: email,
+                    display_name: email.split('@')[0] || 'Usuário',
+                    role: 'user_lojinha',
+                    requires_password_change: false
+                  });
+                }
+              } else {
+                setProfile({
+                  id: id,
+                  email: email,
+                  display_name: email.split('@')[0] || 'Usuário',
+                  role: 'user_lojinha',
+                  requires_password_change: false
+                });
+              }
             } else {
-              setProfile({
-                id: id,
-                email: email,
-                display_name: email.split('@')[0] || 'Usuário',
-                role: 'user_lojinha',
-                requires_password_change: false
-              });
+              throw new Error("O servidor não possui a rota da API configurada (Retornou HTML). Exporte/Faça deploy das atualizações.");
             }
           } else {
             // If API fails (e.g. user already exists in auth but not profiles), fallback

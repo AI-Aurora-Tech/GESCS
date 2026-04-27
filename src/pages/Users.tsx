@@ -110,8 +110,17 @@ const Users: React.FC = () => {
         })
       });
 
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Erro ao criar usuário');
+      const contentType = response.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        const data = await response.json();
+        if (!response.ok) {
+           const errMsg = data.details ? `${data.error}: ${data.details}` : (data.error || 'Erro ao criar usuário');
+           throw new Error(errMsg);
+        }
+      } else {
+        const text = await response.text();
+        throw new Error('A API retornou código HTML em vez de dados. Isso geralmente acontece se você está testando no Vercel (gescs.vercel.app) sem ter feito o Deploy das últimas atualizações. Por favor, exporte ou faça push das atualizações para o Vercel.');
+      }
 
       setSuccess('Usuário criado com sucesso!');
       setIsModalOpen(false);
