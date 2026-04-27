@@ -118,7 +118,7 @@ const Lojinha: React.FC = () => {
 
     const { data: trans } = await supabase
       .from('stock_transactions')
-      .select('*, products(name)')
+      .select('*, products(name, size)')
       .order('created_at', { ascending: false });
     if (trans) setTransactions(trans);
 
@@ -273,7 +273,14 @@ const Lojinha: React.FC = () => {
     if (!window.confirm('Tem certeza que deseja excluir este produto?')) return;
     try {
       const { error } = await supabase.from('products').delete().eq('id', id);
-      if (error) throw error;
+      if (error) {
+        if (error.code === '23503') {
+          alert('Não é possível excluir um produto que possui histórico de movimentação. Tente zerar o estoque em vez disso.');
+        } else {
+          alert('Erro ao excluir produto: ' + error.message);
+        }
+        throw error;
+      }
       fetchData();
     } catch (err) {
       console.error(err);
@@ -331,7 +338,7 @@ const Lojinha: React.FC = () => {
         const { error: demandError } = await supabase
           .from('lojinha_demands')
           .insert([{
-            title: `Reposição Urgente: ${selectedProduct.name}`,
+            title: `Reposição Urgente: ${selectedProduct.name}${selectedProduct.size ? ` (${selectedProduct.size})` : ''}`,
             description: `O estoque atingiu ${newStock} unidades (Mínimo: ${selectedProduct.min_stock || 0}). Necessário realizar compra para atender demanda.`,
             priority: newStock < 0 ? 'Alta' : 'Média',
             status: 'Pendente',
@@ -401,8 +408,7 @@ const Lojinha: React.FC = () => {
             <div key={product.id} className="flex flex-col items-center p-3 border border-gray-300 rounded-lg bg-white text-black shadow-sm">
               <Logo size={48} className="mb-2" />
               <span className="font-bold text-[10px] uppercase text-center leading-tight h-8 flex flex-col items-center">
-                <span>{product.name}</span>
-                {product.size && <span className="text-gray-500 font-normal">Tam: {product.size}</span>}
+                <span>{product.name}{product.size ? ` (${product.size})` : ''}</span>
               </span>
               <span className="font-black text-sm mb-2 text-blue-700">
                 R$ {product.price.toFixed(2)}
@@ -522,7 +528,7 @@ const Lojinha: React.FC = () => {
                       />
                     </td>
                     <td className="px-6 py-4">
-                      <p className="font-medium text-gray-900">{product.name}</p>
+                      <p className="font-medium text-gray-900">{product.name}{product.size ? ` (${product.size})` : ''}</p>
                       <p className="text-xs text-gray-500">{product.category}</p>
                     </td>
                     <td className="px-6 py-4">
@@ -893,7 +899,7 @@ const Lojinha: React.FC = () => {
                         {t.created_at ? format(new Date(t.created_at), 'dd/MM/yyyy HH:mm') : 'Pendente'}
                       </td>
                       <td className="px-6 py-4 font-medium text-gray-900">
-                        {t.products?.name || 'Produto Removido'}
+                        {t.products?.name}{t.products?.size ? ` (${t.products.size})` : ''}
                       </td>
                       <td className="px-6 py-4">
                         <span className={cn(
@@ -1001,7 +1007,7 @@ const Lojinha: React.FC = () => {
               <div className="flex-1">
                 <h3 className="font-bold text-gray-900">Estoque Atualizado!</h3>
                 <p className="text-sm text-gray-500">
-                  Deseja imprimir <strong>{lastRestockedItem.quantity}</strong> etiquetas para <strong>{lastRestockedItem.product.name}</strong> agora?
+                  Deseja imprimir <strong>{lastRestockedItem.quantity}</strong> etiquetas para <strong>{lastRestockedItem.product.name}{lastRestockedItem.product.size ? ` (${lastRestockedItem.product.size})` : ''}</strong> agora?
                 </p>
               </div>
             </div>
@@ -1028,7 +1034,7 @@ const Lojinha: React.FC = () => {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-8">
             <h2 className="text-xl font-bold mb-2">Renovar Estoque</h2>
-            <p className="text-sm text-gray-500 mb-6">{selectedProduct?.name}</p>
+            <p className="text-sm text-gray-500 mb-6">{selectedProduct?.name}{selectedProduct?.size ? ` (${selectedProduct.size})` : ''}</p>
             
             <form onSubmit={handleRestock} className="space-y-4">
               <div>
@@ -1213,7 +1219,7 @@ const Lojinha: React.FC = () => {
             <h2 className="text-xl font-bold mb-2">
               {stockAction === 'entry' ? 'Entrada de Estoque' : 'Saída de Estoque'}
             </h2>
-            <p className="text-sm text-gray-500 mb-6">{selectedProduct.name}</p>
+            <p className="text-sm text-gray-500 mb-6">{selectedProduct.name}{selectedProduct.size ? ` (${selectedProduct.size})` : ''}</p>
             <form onSubmit={handleStockUpdate} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Quantidade</label>
