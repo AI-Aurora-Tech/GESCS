@@ -58,6 +58,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const fetchProfile = async (id: string, email: string) => {
     try {
+      console.log(`Buscando perfil para UID: ${id}`);
       // Try to fetch via API to bypass RLS issues
       const response = await fetch(`/api/users/profile/${id}`);
       if (response.ok) {
@@ -68,8 +69,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return;
         } else {
           const text = await response.text();
-          console.error("API returned non-JSON response:", text.substring(0, 100));
+          console.error("API returned non-JSON response:", text.substring(0, 300));
         }
+      } else {
+        console.warn(`API profile fetch failed with status: ${response.status}`);
       }
 
       // If API fails (e.g. not found), try to fetch via Supabase directly just in case

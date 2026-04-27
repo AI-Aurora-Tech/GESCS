@@ -21,7 +21,7 @@ async function fixAdminAuth() {
     return;
   }
 
-  const authUser = users.users.find(u => u.email === email);
+  const authUser = (users.users as any[]).find(u => u.email === email);
 
   if (authUser) {
     console.log(`User found in Auth with ID: ${authUser.id}`);

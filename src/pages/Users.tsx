@@ -33,7 +33,7 @@ const Users: React.FC = () => {
   const [success, setSuccess] = useState('');
 
   const [newUser, setNewUser] = useState({
-    email: '',
+    username: '',
     password: '',
     displayName: '',
     role: 'user_lojinha' as UserProfile['role']
@@ -97,10 +97,17 @@ const Users: React.FC = () => {
     setSuccess('');
 
     try {
+      const emailValue = newUser.username.includes('@') ? newUser.username : `${newUser.username}@scouts.local`;
+
       const response = await fetch('/api/users/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newUser)
+        body: JSON.stringify({
+          email: emailValue,
+          password: newUser.password,
+          displayName: newUser.displayName,
+          role: newUser.role
+        })
       });
 
       const data = await response.json();
@@ -108,7 +115,7 @@ const Users: React.FC = () => {
 
       setSuccess('Usuário criado com sucesso!');
       setIsModalOpen(false);
-      setNewUser({ email: '', password: '', displayName: '', role: 'user_lojinha' });
+      setNewUser({ username: '', password: '', displayName: '', role: 'user_lojinha' });
       
       setTimeout(() => setSuccess(''), 3000);
     } catch (err: any) {
@@ -248,7 +255,7 @@ const Users: React.FC = () => {
                   <td className="px-6 py-4">
                     <div className="flex items-center text-slate-500 font-medium">
                       <Mail className="w-4 h-4 mr-2 opacity-50" />
-                      {user.email}
+                      {user.email.replace('@scouts.local', '')}
                     </div>
                   </td>
                   <td className="px-6 py-4">
@@ -304,14 +311,14 @@ const Users: React.FC = () => {
                 </div>
                 
                 <div>
-                  <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 ml-1">E-mail</label>
+                  <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 ml-1">Usuário</label>
                   <input
-                    type="email"
+                    type="text"
                     required
-                    value={newUser.email}
-                    onChange={(e) => setNewUser({...newUser, email: e.target.value})}
+                    value={newUser.username}
+                    onChange={(e) => setNewUser({...newUser, username: e.target.value})}
                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-blue-100 focus:border-blue-500 transition-all outline-none font-medium"
-                    placeholder="exemplo@email.com"
+                    placeholder="Ex: joaosilva"
                   />
                 </div>
 

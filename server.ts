@@ -168,7 +168,7 @@ async function startServer() {
   });
 
   // API Route to fetch a user profile
-  app.get("/api/users/profile/:uid?", async (req, res) => {
+  app.get("/api/users/profile/:uid", async (req, res) => {
     const { uid } = req.params;
     
     if (!uid || uid === 'undefined' || uid === 'null') {
