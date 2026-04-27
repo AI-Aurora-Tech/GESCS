@@ -204,6 +204,39 @@ const Lojinha: React.FC = () => {
     }
   };
 
+  const [isRestockModalOpen, setIsRestockModalOpen] = useState(false);
+  const [restockQuantity, setRestockQuantity] = useState(0);
+
+  const handleRestock = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedProduct) return;
+    try {
+      const { error } = await supabase
+        .from('products')
+        .update({
+          stock: (selectedProduct.stock || 0) + restockQuantity
+        })
+        .eq('id', selectedProduct.id);
+      
+      if (error) throw error;
+      
+      // Log transaction
+      await supabase.from('stock_transactions').insert([{
+        product_id: selectedProduct.id,
+        quantity: restockQuantity,
+        type: 'in',
+        user_id: profile?.id
+      }]);
+
+      setIsRestockModalOpen(false);
+      setRestockQuantity(0);
+      fetchData();
+    } catch (err) {
+      console.error(err);
+      alert('Erro ao renovar estoque.');
+    }
+  };
+
   const handleDeleteProduct = async (id: string) => {
     if (!window.confirm('Tem certeza que deseja excluir este produto?')) return;
     try {
@@ -458,6 +491,17 @@ const Lojinha: React.FC = () => {
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex gap-2">
+                        <button 
+                          onClick={() => {
+                            setSelectedProduct(product);
+                            setRestockQuantity(0);
+                            setIsRestockModalOpen(true);
+                          }}
+                          title="Renovar Estoque"
+                          className="p-2 text-green-600 hover:bg-green-50 rounded-lg"
+                        >
+                          <Plus size={18} />
+                        </button>
                         <button 
                           onClick={() => {
                             setSelectedProduct(product);
@@ -879,6 +923,50 @@ const Lojinha: React.FC = () => {
       {/* Modals */}
       {/* ... existing modals ... */}
       
+      {/* Restock Modal */}
+      {isRestockModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-8">
+            <h2 className="text-xl font-bold mb-2">Renovar Estoque</h2>
+            <p className="text-sm text-gray-500 mb-6">{selectedProduct?.name}</p>
+            
+            <form onSubmit={handleRestock} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Quantidade de Entrada</label>
+                <input 
+                  required
+                  autoFocus
+                  type="number"
+                  min="1"
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg text-lg font-bold"
+                  value={restockQuantity || ''}
+                  onChange={(e) => setRestockQuantity(parseInt(e.target.value) || 0)}
+                />
+                <p className="text-xs text-gray-500 mt-2">
+                  Estoque atual: <span className="font-bold">{selectedProduct?.stock}</span> → Novo estoque: <span className="font-bold text-green-600">{(selectedProduct?.stock || 0) + restockQuantity}</span>
+                </p>
+              </div>
+              
+              <div className="flex gap-3 pt-4">
+                <button 
+                  type="button"
+                  onClick={() => setIsRestockModalOpen(false)}
+                  className="flex-1 py-2 border border-gray-200 rounded-lg text-sm font-medium"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="submit"
+                  className="flex-1 py-2 bg-green-600 text-white rounded-lg text-sm font-medium"
+                >
+                  Confirmar Entrada
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Add/Edit Product Modal */}
       {isAddModalOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
