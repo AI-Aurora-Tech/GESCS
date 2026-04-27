@@ -41,17 +41,19 @@ const Logo: React.FC<LogoProps> = ({ branch = 'Grupo', className = '', size = 48
         referrerPolicy="no-referrer"
         onError={(e) => {
           (e.target as HTMLImageElement).style.display = 'none';
-          (e.target as HTMLImageElement).parentElement?.classList.add('use-svg-fallback');
+          (e.target as HTMLImageElement).parentElement?.querySelector('.svg-fallback')?.classList.remove('hidden');
         }}
       />
-      <div className="hidden [.use-svg-fallback_&]:flex flex-col items-center justify-center w-full h-full">
+      <div className="svg-fallback hidden flex flex-col items-center justify-center w-full h-full">
         <svg viewBox="0 0 100 100" className="w-full h-full shadow-sm">
           <circle cx="50" cy="50" r="45" fill="white" stroke={colors.primary} strokeWidth="2" />
           <path 
             d="M50 15 L60 45 L90 45 L65 65 L75 95 L50 75 L25 95 L35 65 L10 45 L40 45 Z" 
             fill={colors.primary}
           />
-          <text x="50" y="70" textAnchor="middle" fill="white" fontSize="8" fontWeight="black" fontFamily="sans-serif">GESCS</text>
+          {size > 30 && (
+            <text x="50" y="70" textAnchor="middle" fill="white" fontSize="8" fontWeight="black" fontFamily="sans-serif">GESCS</text>
+          )}
         </svg>
       </div>
     </div>

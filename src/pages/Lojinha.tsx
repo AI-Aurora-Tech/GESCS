@@ -49,6 +49,7 @@ const Lojinha: React.FC = () => {
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
   const [isDemandModalOpen, setIsDemandModalOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [selectedProductIds, setSelectedProductIds] = useState<Set<string>>(new Set());
   const [stockAction, setStockAction] = useState<'entry' | 'exit'>('entry');
   const [quantity, setQuantity] = useState(1);
   const [scannedItems, setScannedItems] = useState<Record<string, number>>({});
@@ -204,8 +205,27 @@ const Lojinha: React.FC = () => {
     }
   };
 
+  const toggleProductSelection = (id: string) => {
+    setSelectedProductIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAllSelection = () => {
+    if (selectedProductIds.size === filteredProducts.length) {
+      setSelectedProductIds(new Set());
+    } else {
+      setSelectedProductIds(new Set(filteredProducts.map(p => p.id)));
+    }
+  };
+
   const [isRestockModalOpen, setIsRestockModalOpen] = useState(false);
   const [restockQuantity, setRestockQuantity] = useState(0);
+  const [showRestockSuggest, setShowRestockSuggest] = useState(false);
+  const [lastRestockedItem, setLastRestockedItem] = useState<{product: Product, quantity: number} | null>(null);
 
   const handleRestock = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -228,13 +248,25 @@ const Lojinha: React.FC = () => {
         user_id: profile?.id
       }]);
 
+      setLastRestockedItem({ product: selectedProduct, quantity: restockQuantity });
       setIsRestockModalOpen(false);
       setRestockQuantity(0);
+      setShowRestockSuggest(true);
       fetchData();
     } catch (err) {
       console.error(err);
       alert('Erro ao renovar estoque.');
     }
+  };
+
+  const printSpecificLabels = (product: Product, quantity: number) => {
+    // We can't easily trigger a "partial" print without complex CSS media queries
+    // So we'll set the selected items to just this one temporarily and trigger print
+    setSelectedProductIds(new Set([product.id]));
+    setTimeout(() => {
+      window.print();
+      setShowRestockSuggest(false);
+    }, 100);
   };
 
   const handleDeleteProduct = async (id: string) => {
@@ -365,7 +397,7 @@ const Lojinha: React.FC = () => {
     <>
       <div className="hidden print:block p-4">
         <div className="grid grid-cols-4 gap-4">
-          {filteredProducts.map(product => (
+          {products.filter(p => selectedProductIds.has(p.id)).map(product => (
             <div key={product.id} className="flex flex-col items-center p-3 border border-gray-300 rounded-lg bg-white text-black shadow-sm">
               <Logo size={48} className="mb-2" />
               <span className="font-bold text-[10px] uppercase text-center leading-tight h-8 flex flex-col items-center">
@@ -441,11 +473,17 @@ const Lojinha: React.FC = () => {
               />
             </div>
             <button
-              onClick={() => window.print()}
+              onClick={() => {
+                if (selectedProductIds.size === 0) {
+                  alert("Por favor, selecione ao menos um produto para imprimir etiquetas.");
+                  return;
+                }
+                window.print();
+              }}
               className="flex items-center px-4 py-2 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg font-medium transition-colors"
             >
               <BarcodeIcon size={18} className="mr-2" />
-              Imprimir Etiquetas
+              Imprimir Etiquetas {selectedProductIds.size > 0 && `(${selectedProductIds.size})`}
             </button>
           </div>
 
@@ -454,6 +492,14 @@ const Lojinha: React.FC = () => {
             <table className="w-full text-left">
               <thead className="bg-gray-50 border-bottom border-gray-200">
                 <tr>
+                  <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-10">
+                    <input 
+                      type="checkbox" 
+                      className="rounded text-blue-600 focus:ring-blue-500"
+                      checked={selectedProductIds.size === filteredProducts.length && filteredProducts.length > 0}
+                      onChange={toggleAllSelection}
+                    />
+                  </th>
                   <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Produto</th>
                   <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Código de Barras</th>
                   <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Preço</th>
@@ -463,7 +509,18 @@ const Lojinha: React.FC = () => {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {filteredProducts.map((product) => (
-                  <tr key={product.id} className="hover:bg-gray-50 transition-colors">
+                  <tr key={product.id} className={cn(
+                    "hover:bg-gray-50 transition-colors",
+                    selectedProductIds.has(product.id) && "bg-blue-50/30"
+                  )}>
+                    <td className="px-6 py-4">
+                      <input 
+                        type="checkbox" 
+                        className="rounded text-blue-600 focus:ring-blue-500"
+                        checked={selectedProductIds.has(product.id)}
+                        onChange={() => toggleProductSelection(product.id)}
+                      />
+                    </td>
                     <td className="px-6 py-4">
                       <p className="font-medium text-gray-900">{product.name}</p>
                       <p className="text-xs text-gray-500">{product.category}</p>
@@ -923,6 +980,39 @@ const Lojinha: React.FC = () => {
       {/* Modals */}
       {/* ... existing modals ... */}
       
+      {/* Restock Label Suggestion Modal */}
+      {showRestockSuggest && lastRestockedItem && (
+        <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-right-4 duration-300">
+          <div className="bg-white rounded-2xl shadow-2xl border border-blue-100 p-6 max-w-sm w-full">
+            <div className="flex items-start gap-4 mb-4">
+              <div className="p-2 bg-green-100 text-green-600 rounded-lg">
+                <BarcodeIcon size={24} />
+              </div>
+              <div className="flex-1">
+                <h3 className="font-bold text-gray-900">Estoque Atualizado!</h3>
+                <p className="text-sm text-gray-500">
+                  Deseja imprimir <strong>{lastRestockedItem.quantity}</strong> etiquetas para <strong>{lastRestockedItem.product.name}</strong> agora?
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button 
+                onClick={() => setShowRestockSuggest(false)}
+                className="flex-1 py-2 text-sm font-medium text-gray-500 hover:bg-gray-50 rounded-lg"
+              >
+                Agora não
+              </button>
+              <button 
+                onClick={() => printSpecificLabels(lastRestockedItem.product, lastRestockedItem.quantity)}
+                className="flex-1 py-2 bg-blue-600 text-white text-sm font-bold rounded-lg hover:bg-blue-700 shadow-lg shadow-blue-200"
+              >
+                Imprimir
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Restock Modal */}
       {isRestockModalOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">

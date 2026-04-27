@@ -42,6 +42,7 @@ const Inventory: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDisposalModalOpen, setIsDisposalModalOpen] = useState(false);
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
+  const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(new Set());
   const [disposalJustification, setDisposalJustification] = useState('');
 
   const [newAsset, setNewAsset] = useState({
@@ -139,6 +140,24 @@ const Inventory: React.FC = () => {
     a.description.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  const toggleAssetSelection = (id: string) => {
+    setSelectedAssetIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAllAssets = () => {
+    const activeAssets = assets.filter(a => a.status === 'active');
+    if (selectedAssetIds.size === activeAssets.length) {
+      setSelectedAssetIds(new Set());
+    } else {
+      setSelectedAssetIds(new Set(activeAssets.map(a => a.id)));
+    }
+  };
+
   const isUserAtivos = profile?.role === 'user_ativos';
 
   const allTabs = [
@@ -154,8 +173,31 @@ const Inventory: React.FC = () => {
     : allTabs;
 
   return (
-    <div className="space-y-8">
-      <header className="flex justify-between items-center">
+    <div className="space-y-8 print:hidden">
+      <div className="hidden print:block p-4">
+        <div className="grid grid-cols-4 gap-4">
+          {assets.filter(a => selectedAssetIds.has(a.id)).map((asset) => (
+            <div key={asset.id} className="bg-white p-4 border border-gray-300 rounded-xl flex flex-col items-center text-center shadow-sm text-black">
+              <Logo size={48} branch={asset.branch} className="mb-2" />
+              <span className="text-[10px] font-black uppercase text-gray-500 tracking-widest mb-1">{asset.branch}</span>
+              <span className="font-bold text-xs mb-2 leading-tight h-8 flex items-center">{asset.name}</span>
+              {asset.barcode && (
+                <div className="mt-auto">
+                  <Barcode 
+                    value={asset.barcode} 
+                    height={30} 
+                    width={1.2} 
+                    fontSize={8} 
+                    margin={0}
+                  />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <header className="flex justify-between items-center print:hidden">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">4. Sistema de Inventário</h1>
           <p className="text-gray-500">Controle patrimonial e gestão de ativos do grupo.</p>
@@ -203,13 +245,24 @@ const Inventory: React.FC = () => {
               <div key={asset.id} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex flex-col">
                 <div className="p-6 flex-1">
                   <div className="flex justify-between items-start mb-4">
-                    <span className={cn(
-                      "px-2 py-1 rounded-full text-[10px] font-bold uppercase",
-                      asset.status === 'active' ? "bg-green-100 text-green-600" :
-                      asset.status === 'pending_approval' ? "bg-orange-100 text-orange-600" : "bg-gray-100 text-gray-600"
-                    )}>
-                      {asset.status === 'active' ? 'Ativo' : asset.status === 'pending_approval' ? 'Pendente' : 'Baixado'}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <input 
+                        type="checkbox" 
+                        className="rounded text-blue-600 focus:ring-blue-500"
+                        checked={selectedAssetIds.has(asset.id)}
+                        onChange={(e) => {
+                          e.stopPropagation();
+                          toggleAssetSelection(asset.id);
+                        }}
+                      />
+                      <span className={cn(
+                        "px-2 py-1 rounded-full text-[10px] font-bold uppercase",
+                        asset.status === 'active' ? "bg-green-100 text-green-600" :
+                        asset.status === 'pending_approval' ? "bg-orange-100 text-orange-600" : "bg-gray-100 text-gray-600"
+                      )}>
+                        {asset.status === 'active' ? 'Ativo' : asset.status === 'pending_approval' ? 'Pendente' : 'Baixado'}
+                      </span>
+                    </div>
                     <p className="text-sm font-bold text-gray-900">R$ {asset.value.toFixed(2)}</p>
                   </div>
                   <h3 className="text-lg font-bold text-gray-900 mb-1">{asset.name}</h3>
@@ -291,19 +344,55 @@ const Inventory: React.FC = () => {
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center print:hidden">
             <div>
               <h3 className="text-lg font-bold">Impressão de Etiquetas de Ativos</h3>
-              <p className="text-sm text-gray-500">Gere etiquetas com QR/Barcode e logo para cada ramo.</p>
+              <p className="text-sm text-gray-500">Selecione os ativos abaixo para gerar as etiquetas.</p>
+              <div className="mt-2 flex items-center gap-2">
+                <input 
+                  id="select-all-assets"
+                  type="checkbox"
+                  className="rounded text-blue-600 focus:ring-blue-500"
+                  checked={selectedAssetIds.size === assets.filter(a => a.status === 'active').length && assets.length > 0}
+                  onChange={toggleAllAssets}
+                />
+                <label htmlFor="select-all-assets" className="text-sm font-medium text-gray-700 cursor-pointer">
+                  Selecionar Todos ({assets.filter(a => a.status === 'active').length})
+                </label>
+                <span className="text-xs text-gray-400 ml-4">
+                  {selectedAssetIds.size} selecionados
+                </span>
+              </div>
             </div>
             <button 
-              onClick={() => window.print()}
-              className="px-6 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition-all"
+              onClick={() => {
+                if (selectedAssetIds.size === 0) {
+                  alert("Selecione ao menos um ativo para imprimir.");
+                  return;
+                }
+                window.print();
+              }}
+              className="px-6 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-200"
             >
-              Imprimir Selecionados
+              Imprimir Etiquetas ({selectedAssetIds.size})
             </button>
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
             {assets.filter(a => a.status === 'active').map((asset) => (
-              <div key={asset.id} className="bg-white p-4 border border-gray-200 rounded-xl flex flex-col items-center text-center shadow-sm">
+              <div 
+                key={asset.id} 
+                onClick={() => toggleAssetSelection(asset.id)}
+                className={cn(
+                  "bg-white p-4 border rounded-xl flex flex-col items-center text-center shadow-sm cursor-pointer transition-all",
+                  selectedAssetIds.has(asset.id) ? "border-blue-500 ring-2 ring-blue-500/20" : "border-gray-100 hover:border-blue-200"
+                )}
+              >
+                <div className="self-end mb-1">
+                  <input 
+                    type="checkbox" 
+                    className="rounded text-blue-600 focus:ring-blue-500 pointer-events-none"
+                    checked={selectedAssetIds.has(asset.id)}
+                    readOnly
+                  />
+                </div>
                 <Logo size={48} branch={asset.branch} className="mb-2" />
                 <span className="text-[10px] font-black uppercase text-gray-400 tracking-widest mb-1">{asset.branch}</span>
                 <span className="font-bold text-xs mb-2 leading-tight h-8 flex items-center">{asset.name}</span>
