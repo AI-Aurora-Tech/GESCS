@@ -25,7 +25,7 @@ const Logo: React.FC<LogoProps> = ({ branch = 'Grupo', className = '', size = 48
       case 'Escoteiro': return '/logos/escoteiro.png';
       case 'Senior': return '/logos/senior.png';
       case 'Pioneiro': return '/logos/pioneiro.png';
-      default: return '/logos/logo-grupo.png';
+      default: return '/logos/logo-grupo.png.png';
     }
   };
 
@@ -40,6 +40,11 @@ const Logo: React.FC<LogoProps> = ({ branch = 'Grupo', className = '', size = 48
         referrerPolicy="no-referrer"
         onError={(e) => {
           const target = e.target as HTMLImageElement;
+          // If the .png.png failed, try just .png as fallback
+          if (target.src.endsWith('.png.png')) {
+            target.src = '/logos/logo-grupo.png';
+            return;
+          }
           target.style.display = 'none';
           const fallback = target.parentElement?.querySelector('.svg-fallback');
           if (fallback) fallback.classList.remove('hidden');
