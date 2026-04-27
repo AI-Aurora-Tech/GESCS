@@ -27,7 +27,18 @@ const Logo: React.FC<LogoProps> = ({ branch = 'Grupo', className = '', size = 48
           alt="GESCS" 
           className="w-full h-full object-contain"
           referrerPolicy="no-referrer"
+          onError={(e) => {
+            // Fallback to SVG if image fails to load (404/Empty/Corrupt)
+            (e.target as HTMLImageElement).style.display = 'none';
+            (e.target as HTMLImageElement).parentElement?.classList.add('fallback-logo');
+          }}
         />
+        <div className="hidden [.fallback-logo_&]:flex flex-col items-center justify-center w-full h-full bg-blue-50 rounded-lg">
+          <svg viewBox="0 0 100 100" className="w-2/3 h-2/3 text-blue-600 fill-current">
+            <path d="M50 10 L60 40 L90 40 L65 60 L75 90 L50 70 L25 90 L35 60 L10 40 L40 40 Z" />
+          </svg>
+          {size > 40 && <span className="text-[10px] font-bold text-blue-800 mt-1">GESCS</span>}
+        </div>
       </div>
     );
   }

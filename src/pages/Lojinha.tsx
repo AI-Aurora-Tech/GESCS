@@ -27,14 +27,10 @@ interface Product {
   id: string;
   barcode: string;
   name: string;
-  size?: string;
-  purchase_price?: number;
-  sale_price?: number;
-  price: number; // For compatibility with existing code
+  description?: string;
+  price: number;
   stock: number;
   category: string;
-  min_stock?: number;
-  max_stock?: number;
 }
 
 const Lojinha: React.FC = () => {
@@ -58,14 +54,10 @@ const Lojinha: React.FC = () => {
   const [newProduct, setNewProduct] = useState({
     name: '',
     barcode: '',
-    size: '',
-    purchase_price: 0,
-    sale_price: 0,
+    description: '',
     price: 0,
     stock: 0,
-    category: 'Uniforme',
-    min_stock: 5,
-    max_stock: 50
+    category: 'Uniforme'
   });
 
   const generateBarcode = () => {
@@ -130,20 +122,14 @@ const Lojinha: React.FC = () => {
     e.preventDefault();
     try {
       const barcode = newProduct.barcode || generateBarcode();
-      const pPrice = newProduct.purchase_price || 0;
-      let sPrice = newProduct.sale_price;
-
-      // If sale price not provided, set it to 5% above purchase price
-      if (!sPrice || sPrice === 0) {
-        sPrice = Math.round(pPrice * 1.05 * 100) / 100;
-      }
 
       const productToInsert = {
-        ...newProduct,
+        name: newProduct.name,
         barcode,
-        purchase_price: pPrice,
-        sale_price: sPrice,
-        price: sPrice // Keep compatibility
+        price: newProduct.price,
+        stock: newProduct.stock,
+        category: newProduct.category,
+        description: newProduct.description
       };
 
       const { error } = await supabase.from('products').insert([productToInsert]);
@@ -153,19 +139,16 @@ const Lojinha: React.FC = () => {
       setNewProduct({ 
         name: '', 
         barcode: '', 
-        size: '',
-        purchase_price: 0,
-        sale_price: 0,
+        description: '',
         price: 0, 
         stock: 0, 
-        category: 'Uniforme',
-        min_stock: 5,
-        max_stock: 50
+        category: 'Uniforme'
       });
       setActiveTab('estoque');
       fetchData();
     } catch (err) {
       console.error(err);
+      alert('Erro ao cadastrar produto. Verifique se todos os campos estão corretos.');
     }
   };
 
@@ -173,17 +156,14 @@ const Lojinha: React.FC = () => {
     e.preventDefault();
     if (!selectedProduct) return;
     try {
-      const pPrice = newProduct.purchase_price || 0;
-      let sPrice = newProduct.sale_price;
-      if (!sPrice || sPrice === 0) sPrice = Math.round(pPrice * 1.05 * 100) / 100;
-
       const { error } = await supabase
         .from('products')
         .update({
-          ...newProduct,
-          purchase_price: pPrice,
-          sale_price: sPrice,
-          price: sPrice
+          name: newProduct.name,
+          barcode: newProduct.barcode,
+          price: newProduct.price,
+          category: newProduct.category,
+          description: newProduct.description
         })
         .eq('id', selectedProduct.id);
       
@@ -195,6 +175,7 @@ const Lojinha: React.FC = () => {
       fetchData();
     } catch (err) {
       console.error(err);
+      alert('Erro ao atualizar produto.');
     }
   };
 
@@ -439,19 +420,10 @@ const Lojinha: React.FC = () => {
                     </td>
                     <td className="px-6 py-4">
                       <span className={cn(
-                        "px-2 py-1 rounded-full text-xs font-bold",
-                        product.stock <= (product.min_stock || 5) ? "bg-red-100 text-red-600" : 
-                        product.stock >= (product.max_stock || 50) ? "bg-orange-100 text-orange-600" :
-                        "bg-green-100 text-green-600"
+                        "px-2 py-1 rounded-full text-xs font-bold bg-green-100 text-green-600"
                       )}>
                         {product.stock} un
                       </span>
-                      {(product.stock <= (product.min_stock || 5)) && (
-                        <p className="text-[10px] text-red-500 mt-1 font-bold">Estoque Baixo!</p>
-                      )}
-                      {(product.stock >= (product.max_stock || 50)) && (
-                        <p className="text-[10px] text-orange-500 mt-1 font-bold">Estoque Alto!</p>
-                      )}
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex gap-2">
@@ -461,14 +433,10 @@ const Lojinha: React.FC = () => {
                             setNewProduct({
                               name: product.name,
                               barcode: product.barcode,
-                              size: product.size || '',
-                              purchase_price: product.purchase_price || 0,
-                              sale_price: product.sale_price || 0,
+                              description: product.description || '',
                               price: product.price,
                               stock: product.stock,
-                              category: product.category,
-                              min_stock: product.min_stock || 5,
-                              max_stock: product.max_stock || 50
+                              category: product.category
                             });
                             setIsEditing(true);
                             setIsAddModalOpen(true);
@@ -611,7 +579,7 @@ const Lojinha: React.FC = () => {
           <div className="max-w-2xl mx-auto">
             <h2 className="text-xl font-bold mb-6">Ingestão de Dados Cadastrais</h2>
             <form onSubmit={handleAddProduct} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Nome</label>
                   <input 
@@ -622,60 +590,18 @@ const Lojinha: React.FC = () => {
                     onChange={(e) => setNewProduct({...newProduct, name: e.target.value})}
                   />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Tamanho</label>
-                  <input 
-                    type="text"
-                    placeholder="Ex: P, G, 42..."
-                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                    value={newProduct.size}
-                    onChange={(e) => setNewProduct({...newProduct, size: e.target.value})}
-                  />
-                </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Custo de Compra (R$)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Valor de Venda (R$)</label>
                   <input 
                     required
                     type="number"
                     step="0.01"
                     className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                    value={newProduct.purchase_price}
-                    onChange={(e) => setNewProduct({...newProduct, purchase_price: parseFloat(e.target.value)})}
+                    value={newProduct.price}
+                    onChange={(e) => setNewProduct({...newProduct, price: parseFloat(e.target.value)})}
                   />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Valor de Venda (R$)</label>
-                  <input 
-                    type="number"
-                    step="0.01"
-                    placeholder="Opcional (+5% se vazio)"
-                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                    value={newProduct.sale_price}
-                    onChange={(e) => setNewProduct({...newProduct, sale_price: parseFloat(e.target.value)})}
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Código de Barras</label>
-                  <div className="relative">
-                    <input 
-                      type="text"
-                      placeholder="Deixe vazio para gerar"
-                      className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                      value={newProduct.barcode}
-                      onChange={(e) => setNewProduct({...newProduct, barcode: e.target.value})}
-                    />
-                    <button 
-                      type="button"
-                      onClick={() => setNewProduct({...newProduct, barcode: generateBarcode()})}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-blue-600 hover:bg-blue-50 rounded"
-                    >
-                      <BarcodeIcon size={18} />
-                    </button>
-                  </div>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Categoria</label>
@@ -691,37 +617,34 @@ const Lojinha: React.FC = () => {
                   </select>
                 </div>
               </div>
-              <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Inicial</label>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Código de Barras</label>
+                <div className="relative">
                   <input 
-                    required
-                    type="number"
+                    type="text"
+                    placeholder="Deixe vazio para gerar"
                     className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                    value={newProduct.stock}
-                    onChange={(e) => setNewProduct({...newProduct, stock: parseInt(e.target.value)})}
+                    value={newProduct.barcode}
+                    onChange={(e) => setNewProduct({...newProduct, barcode: e.target.value})}
                   />
+                  <button 
+                    type="button"
+                    onClick={() => setNewProduct({...newProduct, barcode: generateBarcode()})}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-blue-600 hover:bg-blue-50 rounded"
+                  >
+                    <BarcodeIcon size={18} />
+                  </button>
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Mín.</label>
-                  <input 
-                    required
-                    type="number"
-                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                    value={newProduct.min_stock}
-                    onChange={(e) => setNewProduct({...newProduct, min_stock: parseInt(e.target.value)})}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Máx.</label>
-                  <input 
-                    required
-                    type="number"
-                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                    value={newProduct.max_stock}
-                    onChange={(e) => setNewProduct({...newProduct, max_stock: parseInt(e.target.value)})}
-                  />
-                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Estoque Inicial</label>
+                <input 
+                  required
+                  type="number"
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                  value={newProduct.stock}
+                  onChange={(e) => setNewProduct({...newProduct, stock: parseInt(e.target.value)})}
+                />
               </div>
               <button 
                 type="submit"
@@ -879,7 +802,7 @@ const Lojinha: React.FC = () => {
           <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8">
             <h2 className="text-xl font-bold mb-6">{isEditing ? 'Editar Produto' : 'Cadastrar Novo Produto'}</h2>
             <form onSubmit={isEditing ? handleUpdateProduct : handleAddProduct} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Nome</label>
                   <input 
@@ -890,60 +813,18 @@ const Lojinha: React.FC = () => {
                     onChange={(e) => setNewProduct({...newProduct, name: e.target.value})}
                   />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Tamanho</label>
-                  <input 
-                    type="text"
-                    placeholder="Ex: P, G, 42..."
-                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                    value={newProduct.size}
-                    onChange={(e) => setNewProduct({...newProduct, size: e.target.value})}
-                  />
-                </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Custo de Compra (R$)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Valor de Venda (R$)</label>
                   <input 
                     required
                     type="number"
                     step="0.01"
                     className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                    value={newProduct.purchase_price}
-                    onChange={(e) => setNewProduct({...newProduct, purchase_price: parseFloat(e.target.value)})}
+                    value={newProduct.price}
+                    onChange={(e) => setNewProduct({...newProduct, price: parseFloat(e.target.value)})}
                   />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Valor de Venda (R$)</label>
-                  <input 
-                    type="number"
-                    step="0.01"
-                    placeholder="Opcional (+5% se vazio)"
-                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                    value={newProduct.sale_price}
-                    onChange={(e) => setNewProduct({...newProduct, sale_price: parseFloat(e.target.value)})}
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Código de Barras</label>
-                  <div className="relative">
-                    <input 
-                      type="text"
-                      placeholder="Deixe vazio para gerar"
-                      className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                      value={newProduct.barcode}
-                      onChange={(e) => setNewProduct({...newProduct, barcode: e.target.value})}
-                    />
-                    <button 
-                      type="button"
-                      onClick={() => setNewProduct({...newProduct, barcode: generateBarcode()})}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-blue-600 hover:bg-blue-50 rounded"
-                    >
-                      <BarcodeIcon size={18} />
-                    </button>
-                  </div>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Categoria</label>
@@ -959,9 +840,28 @@ const Lojinha: React.FC = () => {
                   </select>
                 </div>
               </div>
-              <div className="grid grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Código de Barras</label>
+                <div className="relative">
+                  <input 
+                    type="text"
+                    placeholder="Deixe vazio para gerar"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                    value={newProduct.barcode}
+                    onChange={(e) => setNewProduct({...newProduct, barcode: e.target.value})}
+                  />
+                  <button 
+                    type="button"
+                    onClick={() => setNewProduct({...newProduct, barcode: generateBarcode()})}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-blue-600 hover:bg-blue-50 rounded"
+                  >
+                    <BarcodeIcon size={18} />
+                  </button>
+                </div>
+              </div>
+              {!isEditing && (
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Inicial</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Estoque Inicial</label>
                   <input 
                     required
                     type="number"
@@ -970,27 +870,7 @@ const Lojinha: React.FC = () => {
                     onChange={(e) => setNewProduct({...newProduct, stock: parseInt(e.target.value)})}
                   />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Mín.</label>
-                  <input 
-                    required
-                    type="number"
-                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                    value={newProduct.min_stock}
-                    onChange={(e) => setNewProduct({...newProduct, min_stock: parseInt(e.target.value)})}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Máx.</label>
-                  <input 
-                    required
-                    type="number"
-                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                    value={newProduct.max_stock}
-                    onChange={(e) => setNewProduct({...newProduct, max_stock: parseInt(e.target.value)})}
-                  />
-                </div>
-              </div>
+              )}
               <div className="flex gap-3 pt-4">
                 <button 
                   type="button"

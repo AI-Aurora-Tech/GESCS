@@ -72,24 +72,46 @@ const Cantina: React.FC = () => {
     stock: 0
   });
 
+  const [errorState, setErrorState] = useState<Record<string, boolean>>({});
+
   const fetchIngredients = async () => {
-    const { data, error } = await supabase
-      .from('cantina_ingredients')
-      .select('*')
-      .order('name', { ascending: true });
-    
-    if (data) setIngredients(data);
-    if (error) console.error(error);
+    try {
+      const { data, error } = await supabase
+        .from('cantina_ingredients')
+        .select('*')
+        .order('name', { ascending: true });
+      
+      if (error) {
+        if (error.code === 'PGRST204') {
+          setErrorState(prev => ({ ...prev, ingredients: true }));
+        }
+        console.error(error);
+      } else {
+        setIngredients(data || []);
+      }
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const fetchRecipes = async () => {
-    const { data, error } = await supabase
-      .from('cantina_recipes')
-      .select('*')
-      .order('name', { ascending: true });
-    
-    if (data) setRecipes(data);
-    if (error) console.error(error);
+    try {
+      const { data, error } = await supabase
+        .from('cantina_recipes')
+        .select('*')
+        .order('name', { ascending: true });
+      
+      if (error) {
+        if (error.code === 'PGRST204') {
+          setErrorState(prev => ({ ...prev, recipes: true }));
+        }
+        console.error(error);
+      } else {
+        setRecipes(data || []);
+      }
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const [marginCalc, setMarginCalc] = useState({
@@ -103,7 +125,12 @@ const Cantina: React.FC = () => {
   const fetchFoodBank = async () => {
     try {
       const { data, error } = await supabase.from('cantina_food_bank').select('*').order('expiry_date', { ascending: true });
-      if (error) throw error;
+      if (error) {
+        if (error.code === 'PGRST204') {
+          setErrorState(prev => ({ ...prev, foodBank: true }));
+        }
+        throw error;
+      }
       setFoodBank(data || []);
     } catch (e) {
       console.error(e);
@@ -495,45 +522,63 @@ const Cantina: React.FC = () => {
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
               <div className="p-4 bg-gray-50 border-b border-gray-100 font-bold text-sm uppercase text-gray-500">Ingredientes em Estoque</div>
               <div className="divide-y divide-gray-100 max-h-[400px] overflow-auto">
-                {ingredients.map(ing => (
-                  <div key={ing.id} className="p-4 flex justify-between items-center">
-                    <div>
-                      <p className="font-bold">{ing.name}</p>
-                      <p className="text-xs text-gray-500">{ing.stock} {ing.unit} | R$ {ing.unit_cost.toFixed(2)}/{ing.unit}</p>
-                    </div>
-                    <button 
-                      onClick={() => handleAdjustIngredient(ing)}
-                      className="text-blue-600 font-bold text-xs hover:underline"
-                    >
-                      Ajustar
-                    </button>
+                {errorState.ingredients ? (
+                  <div className="p-8 text-center bg-yellow-50 text-yellow-800">
+                    <p className="font-bold mb-1">Módulo de Ingredientes em Configuração</p>
+                    <p className="text-xs">O banco de dados para ingredientes será habilitado em breve pela administração.</p>
                   </div>
-                ))}
-                {ingredients.length === 0 && <div className="p-8 text-center text-gray-400">Nenhum ingrediente cadastrado.</div>}
+                ) : (
+                  <>
+                    {ingredients.map(ing => (
+                      <div key={ing.id} className="p-4 flex justify-between items-center">
+                        <div>
+                          <p className="font-bold">{ing.name}</p>
+                          <p className="text-xs text-gray-500">{ing.stock} {ing.unit} | R$ {ing.unit_cost.toFixed(2)}/{ing.unit}</p>
+                        </div>
+                        <button 
+                          onClick={() => handleAdjustIngredient(ing)}
+                          className="text-blue-600 font-bold text-xs hover:underline"
+                        >
+                          Ajustar
+                        </button>
+                      </div>
+                    ))}
+                    {ingredients.length === 0 && <div className="p-8 text-center text-gray-400">Nenhum ingrediente cadastrado.</div>}
+                  </>
+                )}
               </div>
             </div>
 
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
               <div className="p-4 bg-gray-50 border-b border-gray-100 font-bold text-sm uppercase text-gray-500">Receitas Disponíveis</div>
               <div className="divide-y divide-gray-100">
-                {recipes.map(rec => (
-                  <div key={rec.id} className="p-4">
-                    <div className="flex justify-between items-start mb-2">
-                      <h4 className="font-bold">{rec.name}</h4>
-                      <button 
-                        onClick={() => {
-                          setSelectedRecipe(rec);
-                          setIsProductionModalOpen(true);
-                        }}
-                        className="px-3 py-1 bg-green-600 text-white text-[10px] font-bold rounded-lg uppercase"
-                      >
-                        Produzir
-                      </button>
-                    </div>
-                    <p className="text-xs text-gray-500">{rec.ingredients?.length || 0} ingredientes utilizados.</p>
+                {errorState.recipes ? (
+                  <div className="p-8 text-center bg-yellow-50 text-yellow-800">
+                    <p className="font-bold mb-1">Módulo de Receitas em Configuração</p>
+                    <p className="text-xs">O banco de dados para receitas será habilitado em breve pela administração.</p>
                   </div>
-                ))}
-                {recipes.length === 0 && <div className="p-8 text-center text-gray-400">Nenhuma receita cadastrada.</div>}
+                ) : (
+                  <>
+                    {recipes.map(rec => (
+                      <div key={rec.id} className="p-4">
+                        <div className="flex justify-between items-start mb-2">
+                          <h4 className="font-bold">{rec.name}</h4>
+                          <button 
+                            onClick={() => {
+                              setSelectedRecipe(rec);
+                              setIsProductionModalOpen(true);
+                            }}
+                            className="px-3 py-1 bg-green-600 text-white text-[10px] font-bold rounded-lg uppercase"
+                          >
+                            Produzir
+                          </button>
+                        </div>
+                        <p className="text-xs text-gray-500">{rec.ingredients?.length || 0} ingredientes utilizados.</p>
+                      </div>
+                    ))}
+                    {recipes.length === 0 && <div className="p-8 text-center text-gray-400">Nenhuma receita cadastrada.</div>}
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -563,34 +608,45 @@ const Cantina: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {foodBank.map((item) => (
-                  <tr key={item.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-6 py-4 font-medium">{item.name}</td>
-                    <td className="px-6 py-4 text-sm">{item.quantity} {item.unit}</td>
-                    <td className="px-6 py-4 text-sm">
-                      <div className="flex items-center gap-2">
-                        {format(new Date(item.expiry_date), 'dd/MM/yyyy')}
-                        {new Date(item.expiry_date) < new Date() && (
-                          <span className="px-2 py-0.5 bg-red-100 text-red-600 text-[10px] font-bold uppercase rounded-full">
-                            Vencido
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <button className="text-red-600 hover:bg-red-50 p-2 rounded-lg transition-colors">
-                        <Trash2 size={16} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {foodBank.length === 0 && (
+                {errorState.foodBank ? (
                   <tr>
-                    <td colSpan={4} className="px-6 py-12 text-center text-gray-400">
-                      <History size={48} className="mx-auto mb-4 opacity-10" />
-                      Nenhum item no banco de alimentos.
+                    <td colSpan={4} className="px-6 py-12 text-center bg-yellow-50 text-yellow-800">
+                      <p className="font-bold mb-1">Módulo de Banco de Alimentos em Configuração</p>
+                      <p className="text-xs">O banco de dados para controle de excedentes será habilitado em breve.</p>
                     </td>
                   </tr>
+                ) : (
+                  <>
+                    {foodBank.map((item) => (
+                      <tr key={item.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-6 py-4 font-medium">{item.name}</td>
+                        <td className="px-6 py-4 text-sm">{item.quantity} {item.unit}</td>
+                        <td className="px-6 py-4 text-sm">
+                          <div className="flex items-center gap-2">
+                            {format(new Date(item.expiry_date), 'dd/MM/yyyy')}
+                            {new Date(item.expiry_date) < new Date() && (
+                              <span className="px-2 py-0.5 bg-red-100 text-red-600 text-[10px] font-bold uppercase rounded-full">
+                                Vencido
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <button className="text-red-600 hover:bg-red-50 p-2 rounded-lg transition-colors">
+                            <Trash2 size={16} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {foodBank.length === 0 && (
+                      <tr>
+                        <td colSpan={4} className="px-6 py-12 text-center text-gray-400">
+                          <History size={48} className="mx-auto mb-4 opacity-10" />
+                          Nenhum item no banco de alimentos.
+                        </td>
+                      </tr>
+                    )}
+                  </>
                 )}
               </tbody>
             </table>
