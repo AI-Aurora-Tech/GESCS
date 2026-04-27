@@ -270,26 +270,30 @@ const Lojinha: React.FC = () => {
   };
 
   const handleDeleteProduct = async (id: string) => {
-    if (!window.confirm('Tem certeza que deseja excluir este produto? Todo o histórico de movimentação e etiquetas vinculadas também serão removidos.')) return;
+    if (!window.confirm('Tem certeza que deseja excluir este produto? Todo o histórico de movimentação também será removido.')) return;
     try {
       // 1. Limpar transações de estoque vinculadas
-      await supabase.from('stock_transactions').delete().eq('product_id', id);
+      const { error: transError } = await supabase.from('stock_transactions').delete().eq('product_id', id);
+      if (transError) {
+        console.error('Erro ao limpar transações:', transError);
+        alert('Erro ao limpar histórico: ' + transError.message);
+        return;
+      }
       
-      // 2. Limpar demandas/alertas vinculados
-      await supabase.from('lojinha_demands').delete().eq('product_id', id);
-
-      // 3. Deletar o produto
-      const { error } = await supabase.from('products').delete().eq('id', id);
+      // 2. Deletar o produto
+      const { error: prodError } = await supabase.from('products').delete().eq('id', id);
       
-      if (error) {
-        alert('Erro ao excluir produto: ' + error.message);
-        throw error;
+      if (prodError) {
+        console.error('Erro ao excluir produto:', prodError);
+        alert('Erro ao excluir produto: ' + prodError.message);
+        return;
       }
       
       fetchData();
       alert('Produto e histórico removidos com sucesso.');
     } catch (err) {
-      console.error(err);
+      console.error('Exceção ao excluir:', err);
+      alert('Ocorreu um erro inesperado ao excluir o produto.');
     }
   };
 
