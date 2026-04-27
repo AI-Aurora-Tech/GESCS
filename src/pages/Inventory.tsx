@@ -11,7 +11,8 @@ import {
   AlertCircle,
   Box,
   ClipboardCheck,
-  Download
+  Download,
+  Barcode as BarcodeIcon
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { cn } from '../lib/utils';
@@ -288,15 +289,27 @@ const Inventory: React.FC = () => {
                       </button>
                     </>
                   ) : asset.status === 'active' ? (
-                    <button 
-                      onClick={() => {
-                        setSelectedAsset(asset);
-                        setIsDisposalModalOpen(true);
-                      }}
-                      className="w-full flex items-center justify-center py-2 bg-white border border-gray-200 text-gray-600 text-xs font-bold rounded-lg hover:bg-gray-100"
-                    >
-                      <Trash2 size={14} className="mr-1" /> Dar Baixa
-                    </button>
+                    <div className="flex gap-2 w-full">
+                      <button 
+                        onClick={() => {
+                          setSelectedAsset(asset);
+                          setIsDisposalModalOpen(true);
+                        }}
+                        className="flex-1 flex items-center justify-center py-2 bg-white border border-gray-200 text-gray-600 text-xs font-bold rounded-lg hover:bg-gray-100"
+                      >
+                        <Trash2 size={14} className="mr-1" /> Dar Baixa
+                      </button>
+                      <button 
+                        onClick={() => {
+                          setSelectedAssetIds(new Set([asset.id]));
+                          setTimeout(() => window.print(), 100);
+                        }}
+                        className="p-2 bg-white border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-100"
+                        title="Imprimir Etiqueta"
+                      >
+                        <BarcodeIcon size={14} />
+                      </button>
+                    </div>
                   ) : (
                     <div className="w-full text-center text-xs text-gray-400 italic py-2">
                       Baixado em: {asset.date_disposed ? format(new Date(asset.date_disposed), 'dd/MM/yyyy', { locale: ptBR }) : '-'}

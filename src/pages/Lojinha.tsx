@@ -612,6 +612,16 @@ const Lojinha: React.FC = () => {
                         >
                           <ArrowUpRight size={18} />
                         </button>
+                        <button 
+                          onClick={() => {
+                            setSelectedProductIds(new Set([product.id]));
+                            setTimeout(() => window.print(), 100);
+                          }}
+                          className="p-2 text-gray-500 hover:bg-gray-50 rounded-lg"
+                          title="Imprimir Etiqueta"
+                        >
+                          <BarcodeIcon size={18} />
+                        </button>
                       </div>
                     </td>
                   </tr>
