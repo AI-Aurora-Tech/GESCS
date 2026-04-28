@@ -267,7 +267,7 @@ const Lojinha: React.FC = () => {
     setSelectedProductIds(new Set([product.id]));
     setPrintQuantities({ [product.id]: Math.min(product.stock, quantity) });
     setShowRestockSuggest(false);
-    window.print();
+    setTimeout(() => window.print(), 100);
   };
 
   const handleDeleteProduct = async (id: string) => {
@@ -429,11 +429,11 @@ const Lojinha: React.FC = () => {
   return (
     <>
       <div className="hidden print:block p-4">
-        <div className="grid grid-cols-4 gap-4">
+        <div className="flex flex-wrap gap-4 justify-start">
           {products.filter(p => selectedProductIds.has(p.id)).flatMap(product => {
             const qty = printQuantities[product.id] || 1;
             return Array.from({ length: qty }).map((_, idx) => (
-              <div key={`${product.id}-${idx}`} className="flex flex-col items-center p-3 border border-gray-300 rounded-lg bg-white text-black shadow-sm break-inside-avoid">
+              <div key={`${product.id}-${idx}`} className="flex flex-col items-center p-3 border border-gray-300 rounded-lg bg-white text-black shadow-sm break-inside-avoid w-44">
                 <Logo size={48} className="mb-2" />
                 <span className="font-bold text-[10px] uppercase text-center leading-tight h-8 flex flex-col items-center">
                   <span>{product.name}{product.size ? ` (${product.size})` : ''}</span>
@@ -1407,8 +1407,8 @@ const Lojinha: React.FC = () => {
                       alert("A quantidade total de etiquetas não pode ser zero.");
                       return;
                   }
-                  window.print();
                   setShowPrintModal(false);
+                  setTimeout(() => window.print(), 100);
                 }}
                 className="flex-1 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-xl font-medium transition-colors flex items-center justify-center"
               >

@@ -102,7 +102,7 @@ const Layout: React.FC = () => {
   }
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="flex h-screen bg-gray-50 print:h-auto print:block">
       {/* Sidebar */}
       <aside className={cn(
         "bg-white border-r border-gray-200 transition-all duration-300 flex flex-col print:hidden",
@@ -173,7 +173,7 @@ const Layout: React.FC = () => {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-auto p-8">
+      <main className="flex-1 overflow-auto p-8 print:p-0 print:overflow-visible print:block">
         <Outlet />
       </main>
 
