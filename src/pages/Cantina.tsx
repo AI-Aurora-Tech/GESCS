@@ -333,13 +333,13 @@ const Cantina: React.FC = () => {
       </header>
 
       {/* Sub-Tabs Navigation */}
-      <div className="flex border-b border-gray-200">
+      <div className="flex border-b border-gray-200 overflow-x-auto whitespace-nowrap no-scrollbar">
         {tabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id as any)}
             className={cn(
-              "flex items-center px-6 py-3 border-b-2 font-medium text-sm transition-all",
+              "flex items-center px-4 md:px-6 py-3 border-b-2 font-medium text-sm transition-all flex-shrink-0",
               activeTab === tab.id 
                 ? "border-blue-600 text-blue-600 bg-blue-50/50" 
                 : "border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50"
@@ -389,21 +389,21 @@ const Cantina: React.FC = () => {
             </div>
           </div>
 
-          {/* Transactions List */}
+          {/* Dynamic Records Header */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-            <div className="p-6 border-b border-gray-100 flex justify-between items-center">
+            <div className="p-4 md:p-6 border-b border-gray-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
               <h3 className="text-lg font-bold">Lançamentos Recentes</h3>
-              <div className="flex gap-2">
+              <div className="flex w-full md:w-auto gap-2">
                 <button 
                   onClick={() => setIsModalOpen(true)}
-                  className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
+                  className="flex-1 md:flex-none flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
                 >
                   <Plus size={18} className="mr-2" /> Novo Lançamento
                 </button>
               </div>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-left">
+              <table className="w-full text-left min-w-[700px]">
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Data</th>
@@ -500,20 +500,20 @@ const Cantina: React.FC = () => {
 
       {activeTab === 'receitas' && (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-          <div className="flex justify-between items-center">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <h2 className="text-xl font-bold">Gestão de Produção e Receitas</h2>
-            <div className="flex gap-2">
+            <div className="flex w-full md:w-auto gap-2">
               <button 
                 onClick={() => setIsIngredientModalOpen(true)}
-                className="flex items-center px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-200"
+                className="flex-1 md:flex-none flex items-center justify-center px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-200"
               >
-                <Plus size={18} className="mr-2" /> Novo Ingrediente
+                <Plus size={18} className="mr-2" /> Ingrediente
               </button>
               <button 
                 onClick={() => setIsRecipeModalOpen(true)}
-                className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
+                className="flex-1 md:flex-none flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
               >
-                <Plus size={18} className="mr-2" /> Nova Receita
+                <Plus size={18} className="mr-2" /> Receita
               </button>
             </div>
           </div>
@@ -587,18 +587,18 @@ const Cantina: React.FC = () => {
 
       {activeTab === 'banco' && (
         <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 animate-in fade-in slide-in-from-bottom-2 duration-300">
-          <div className="flex justify-between items-center mb-6">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
             <div>
               <h2 className="text-xl font-bold">Banco de Alimentos</h2>
               <p className="text-sm text-gray-500">Controle de excedentes e validade.</p>
             </div>
-            <button className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700">
+            <button className="w-full md:w-auto flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700">
               <Plus size={18} className="mr-2" /> Adicionar Lote
             </button>
           </div>
           
           <div className="overflow-x-auto">
-            <table className="w-full text-left">
+            <table className="w-full text-left min-w-[600px]">
               <thead>
                 <tr className="border-b border-gray-100 text-[10px] uppercase font-bold text-gray-400 tracking-widest">
                   <th className="px-6 py-4 font-sans">Item</th>
@@ -656,17 +656,17 @@ const Cantina: React.FC = () => {
 
       {activeTab === 'materiais' && (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-          <div className="flex justify-between items-center">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <h2 className="text-xl font-bold">Materiais e Produtos Ofertados</h2>
             <button 
               onClick={() => setIsMaterialModalOpen(true)}
-              className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
+              className="w-full md:w-auto flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
             >
               <Plus size={18} className="mr-2" /> Novo Material
             </button>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             {materials.map((m) => (
               <div key={m.id} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
                 <div className="flex justify-between items-start mb-2">

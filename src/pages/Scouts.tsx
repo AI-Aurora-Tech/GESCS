@@ -116,13 +116,13 @@ const Scouts: React.FC = () => {
       </header>
 
       {/* Sub-Tabs Navigation */}
-      <div className="flex border-b border-gray-200">
+      <div className="flex border-b border-gray-200 overflow-x-auto whitespace-nowrap no-scrollbar">
         {tabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id as any)}
             className={cn(
-              "flex items-center px-6 py-3 border-b-2 font-medium text-sm transition-all",
+              "flex items-center px-4 md:px-6 py-3 border-b-2 font-medium text-sm transition-all flex-shrink-0",
               activeTab === tab.id 
                 ? "border-blue-600 text-blue-600 bg-blue-50/50" 
                 : "border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50"
@@ -137,27 +137,27 @@ const Scouts: React.FC = () => {
       {activeTab === 'membros' && (
         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-300">
           {/* Stats Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
             {[
               { label: 'Ativos', value: stats.active, icon: UserCheck, color: 'text-green-600', bg: 'bg-green-100' },
               { label: 'Inadimplentes', value: stats.overdue, icon: AlertTriangle, color: 'text-red-600', bg: 'bg-red-100' },
               { label: 'Isentos', value: stats.exempt, icon: CreditCard, color: 'text-blue-600', bg: 'bg-blue-100' },
               { label: 'Inativos', value: stats.inactive, icon: UserX, color: 'text-gray-600', bg: 'bg-gray-100' },
             ].map((stat) => (
-              <div key={stat.label} className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+              <div key={stat.label} className="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-gray-100">
                 <div className="flex items-center justify-between mb-2">
                   <div className={cn("p-2 rounded-lg", stat.bg)}>
-                    <stat.icon size={20} className={stat.color} />
+                    <stat.icon size={18} className={stat.color} />
                   </div>
-                  <span className="text-2xl font-bold text-gray-900">{stat.value}</span>
+                  <span className="text-xl md:text-2xl font-bold text-gray-900">{stat.value}</span>
                 </div>
-                <p className="text-sm text-gray-500 font-medium">{stat.label}</p>
+                <p className="text-xs md:text-sm text-gray-500 font-medium">{stat.label}</p>
               </div>
             ))}
           </div>
 
           {/* Search and Filters */}
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex gap-4">
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col md:flex-row gap-4">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
               <input 
@@ -172,17 +172,17 @@ const Scouts: React.FC = () => {
 
           {/* Member Table */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-            <div className="p-6 border-b border-gray-100 flex justify-between items-center">
+            <div className="p-4 md:p-6 border-b border-gray-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
               <h3 className="text-lg font-bold">Efetivo Atual</h3>
               <button 
                 onClick={() => setIsModalOpen(true)}
-                className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
+                className="w-full md:w-auto flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
               >
                 <Plus size={18} className="mr-2" /> Novo Cadastro
               </button>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-left">
+              <table className="w-full text-left min-w-[800px]">
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Membro</th>

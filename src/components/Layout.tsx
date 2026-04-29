@@ -27,6 +27,7 @@ const Layout: React.FC = () => {
   const { profile, logout } = useAuth();
   const location = useLocation();
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(true);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
   
   // Password Change Modal State
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
@@ -102,29 +103,57 @@ const Layout: React.FC = () => {
   }
 
   return (
-    <div className="flex h-screen bg-gray-50 print:h-auto print:block">
+    <div className="flex h-screen bg-gray-50 print:h-auto print:block overflow-hidden print:overflow-visible">
+      {/* Mobile Top Bar */}
+      <div className="md:hidden flex items-center justify-between p-4 bg-white border-b border-gray-200 fixed top-0 left-0 right-0 z-40 print:hidden">
+        <div className="flex items-center gap-2">
+          <Logo size={32} />
+          <span className="font-bold text-lg text-blue-600">GESCS</span>
+        </div>
+        <button 
+          onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} 
+          className="p-2 hover:bg-gray-100 rounded-lg"
+        >
+          {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+        </button>
+      </div>
+
+      {/* Sidebar Overlay for Mobile */}
+      {isMobileMenuOpen && (
+        <div 
+          className="md:hidden fixed inset-0 bg-black/50 z-40 backdrop-blur-sm transition-opacity print:hidden"
+          onClick={() => setIsMobileMenuOpen(false)}
+        />
+      )}
+
       {/* Sidebar */}
       <aside className={cn(
-        "bg-white border-r border-gray-200 transition-all duration-300 flex flex-col print:hidden",
-        isSidebarOpen ? "w-64" : "w-20"
+        "bg-white border-r border-gray-200 transition-all duration-300 flex flex-col print:hidden fixed md:relative inset-y-0 left-0 z-50 md:z-auto",
+        isSidebarOpen ? "w-64" : "w-20",
+        isMobileMenuOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
+        "w-64 md:flex" // Mobile is always 64 wide
       )}>
         <div className="p-6 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Logo size={40} />
-            {isSidebarOpen && <span className="font-bold text-xl text-blue-600">GESCS Admin</span>}
+            {(isSidebarOpen || isMobileMenuOpen) && <span className="font-bold text-xl text-blue-600">GESCS Admin</span>}
           </div>
-          <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-1 hover:bg-gray-100 rounded">
+          <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="hidden md:block p-1 hover:bg-gray-100 rounded">
             {isSidebarOpen ? <X size={20} /> : <Menu size={20} />}
+          </button>
+          <button onClick={() => setIsMobileMenuOpen(false)} className="md:hidden p-1 hover:bg-gray-100 rounded">
+            <X size={20} />
           </button>
         </div>
 
-        <nav className="flex-1 px-4 space-y-2 mt-4">
+        <nav className="flex-1 px-4 space-y-2 mt-4 overflow-y-auto">
           {navigation.map((item) => {
             const isActive = location.pathname === item.href;
             return (
               <Link
                 key={item.name}
                 to={item.href}
+                onClick={() => setIsMobileMenuOpen(false)}
                 className={cn(
                   "flex items-center p-3 rounded-lg transition-colors",
                   isActive 
@@ -133,13 +162,13 @@ const Layout: React.FC = () => {
                 )}
               >
                 <item.icon size={20} />
-                {isSidebarOpen && <span className="ml-3 font-medium">{item.name}</span>}
+                {(isSidebarOpen || isMobileMenuOpen) && <span className="ml-3 font-medium">{item.name}</span>}
               </Link>
             );
           })}
         </nav>
 
-        <div className="p-4 border-t border-gray-200">
+        <div className="p-4 border-t border-gray-200 bg-white">
           <div className="flex items-center mb-4">
             {profile?.photo_url ? (
               <img src={profile.photo_url} alt="" className="w-8 h-8 rounded-full" />
@@ -148,7 +177,7 @@ const Layout: React.FC = () => {
                 {profile?.display_name?.[0] || 'U'}
               </div>
             )}
-            {isSidebarOpen && (
+            {(isSidebarOpen || isMobileMenuOpen) && (
               <div className="ml-3 overflow-hidden">
                 <p className="text-sm font-medium text-gray-900 truncate">{profile?.display_name}</p>
                 <p className="text-xs text-gray-500 truncate capitalize">{profile?.role?.replace('_', ' ')}</p>
@@ -156,24 +185,27 @@ const Layout: React.FC = () => {
             )}
           </div>
           <button 
-            onClick={() => setIsPasswordModalOpen(true)}
+            onClick={() => {
+              setIsPasswordModalOpen(true);
+              setIsMobileMenuOpen(false);
+            }}
             className="flex items-center w-full p-3 text-gray-600 hover:bg-blue-50 hover:text-blue-600 rounded-lg transition-colors mb-2"
           >
             <Key size={20} />
-            {isSidebarOpen && <span className="ml-3 font-medium">Trocar Senha</span>}
+            {(isSidebarOpen || isMobileMenuOpen) && <span className="ml-3 font-medium">Trocar Senha</span>}
           </button>
           <button 
             onClick={logout}
             className="flex items-center w-full p-3 text-gray-600 hover:bg-red-50 hover:text-red-600 rounded-lg transition-colors"
           >
             <LogOut size={20} />
-            {isSidebarOpen && <span className="ml-3 font-medium">Sair</span>}
+            {(isSidebarOpen || isMobileMenuOpen) && <span className="ml-3 font-medium">Sair</span>}
           </button>
         </div>
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-auto p-8 print:p-0 print:overflow-visible print:block">
+      <main className="flex-1 overflow-auto p-4 md:p-8 print:p-0 print:overflow-visible print:block mt-16 md:mt-0">
         <Outlet />
       </main>
 

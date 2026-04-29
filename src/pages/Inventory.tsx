@@ -206,13 +206,13 @@ const Inventory: React.FC = () => {
       </header>
 
       {/* Sub-Tabs Navigation */}
-      <div className="flex border-b border-gray-200">
+      <div className="flex border-b border-gray-200 overflow-x-auto whitespace-nowrap no-scrollbar">
         {tabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id as any)}
             className={cn(
-              "flex items-center px-6 py-3 border-b-2 font-medium text-sm transition-all",
+              "flex items-center px-4 md:px-6 py-3 border-b-2 font-medium text-sm transition-all flex-shrink-0",
               activeTab === tab.id 
                 ? "border-blue-600 text-blue-600 bg-blue-50/50" 
                 : "border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50"
@@ -354,22 +354,24 @@ const Inventory: React.FC = () => {
 
       {activeTab === 'etiquetas' && (
         <div className="space-y-6">
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center print:hidden">
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 print:hidden">
             <div>
               <h3 className="text-lg font-bold">Impressão de Etiquetas de Ativos</h3>
               <p className="text-sm text-gray-500">Selecione os ativos abaixo para gerar as etiquetas.</p>
-              <div className="mt-2 flex items-center gap-2">
-                <input 
-                  id="select-all-assets"
-                  type="checkbox"
-                  className="rounded text-blue-600 focus:ring-blue-500"
-                  checked={selectedAssetIds.size === assets.filter(a => a.status === 'active').length && assets.length > 0}
-                  onChange={toggleAllAssets}
-                />
-                <label htmlFor="select-all-assets" className="text-sm font-medium text-gray-700 cursor-pointer">
-                  Selecionar Todos ({assets.filter(a => a.status === 'active').length})
-                </label>
-                <span className="text-xs text-gray-400 ml-4">
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-2">
+                  <input 
+                    id="select-all-assets"
+                    type="checkbox"
+                    className="rounded text-blue-600 focus:ring-blue-500"
+                    checked={selectedAssetIds.size === assets.filter(a => a.status === 'active').length && assets.length > 0}
+                    onChange={toggleAllAssets}
+                  />
+                  <label htmlFor="select-all-assets" className="text-sm font-medium text-gray-700 cursor-pointer">
+                    Selecionar Todos ({assets.filter(a => a.status === 'active').length})
+                  </label>
+                </div>
+                <span className="text-xs text-gray-400">
                   {selectedAssetIds.size} selecionados
                 </span>
               </div>
@@ -382,13 +384,13 @@ const Inventory: React.FC = () => {
                 }
                 window.print();
               }}
-              className="px-6 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-200"
+              className="w-full md:w-auto px-6 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-200"
             >
               Imprimir Etiquetas ({selectedAssetIds.size})
             </button>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
             {assets.filter(a => a.status === 'active').map((asset) => (
               <div 
                 key={asset.id} 

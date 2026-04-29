@@ -85,12 +85,12 @@ const Financeiro: React.FC = () => {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
-      <header className="flex justify-between items-center">
+      <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Painel Financeiro Consolidado</h1>
-          <p className="text-gray-500">Visão geral de todas as receitas e despesas do grupo.</p>
+          <p className="text-gray-500 text-sm">Visão geral de todas as receitas e despesas do grupo.</p>
         </div>
-        <button className="flex items-center px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-200 transition-colors">
+        <button className="w-full md:w-auto flex items-center justify-center px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-200 transition-colors">
           <Download size={18} className="mr-2" /> Exportar Relatório
         </button>
       </header>
@@ -234,7 +234,7 @@ const Financeiro: React.FC = () => {
               </div>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-left">
+              <table className="w-full text-left min-w-[800px]">
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-wider">Data</th>

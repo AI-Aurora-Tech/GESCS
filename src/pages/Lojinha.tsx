@@ -475,13 +475,13 @@ const Lojinha: React.FC = () => {
       </header>
 
       {/* Sub-Tabs Navigation */}
-      <div className="flex border-b border-gray-200">
+      <div className="flex border-b border-gray-200 overflow-x-auto whitespace-nowrap no-scrollbar">
         {tabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id as any)}
             className={cn(
-              "flex items-center px-6 py-3 border-b-2 font-medium text-sm transition-all",
+              "flex items-center px-4 md:px-6 py-3 border-b-2 font-medium text-sm transition-all flex-shrink-0",
               activeTab === tab.id 
                 ? "border-blue-600 text-blue-600 bg-blue-50/50" 
                 : "border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50"
@@ -496,7 +496,7 @@ const Lojinha: React.FC = () => {
       {activeTab === 'estoque' && (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
           {/* Search and Filters */}
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex gap-4">
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col md:flex-row gap-4">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
               <input 
@@ -523,7 +523,7 @@ const Lojinha: React.FC = () => {
                 setPrintQuantities(initialQty);
                 setShowPrintModal(true);
               }}
-              className="flex items-center px-4 py-2 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg font-medium transition-colors"
+              className="flex items-center justify-center px-4 py-2 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg font-medium transition-colors whitespace-nowrap"
             >
               <BarcodeIcon size={18} className="mr-2" />
               Imprimir Etiquetas {selectedProductIds.size > 0 && `(${selectedProductIds.size})`}
@@ -532,7 +532,8 @@ const Lojinha: React.FC = () => {
 
           {/* Product Table */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-            <table className="w-full text-left">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left min-w-[800px]">
               <thead className="bg-gray-50 border-bottom border-gray-200">
                 <tr>
                   <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider w-10">
@@ -674,6 +675,7 @@ const Lojinha: React.FC = () => {
             </table>
           </div>
         </div>
+      </div>
       )}
 
       {activeTab === 'conferencia' && (
@@ -684,7 +686,7 @@ const Lojinha: React.FC = () => {
               Escaneie os códigos de barras dos produtos físicos. O sistema comparará com o estoque atual.
             </p>
             
-            <form onSubmit={handleScan} className="flex gap-4 mb-8">
+            <form onSubmit={handleScan} className="flex flex-col md:flex-row gap-4 mb-8">
               <div className="relative flex-1">
                 <BarcodeIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
                 <input 
@@ -705,7 +707,8 @@ const Lojinha: React.FC = () => {
             </form>
 
             <div className="overflow-hidden border border-gray-200 rounded-xl">
-              <table className="w-full text-left">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left min-w-[800px]">
                 <thead className="bg-gray-50 border-b border-gray-200">
                   <tr>
                     <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Produto</th>
@@ -752,6 +755,7 @@ const Lojinha: React.FC = () => {
                 </tbody>
               </table>
             </div>
+          </div>
             
             <div className="mt-6 flex justify-end">
               <button 
@@ -766,11 +770,11 @@ const Lojinha: React.FC = () => {
       )}
 
       {activeTab === 'cadastros' && (
-        <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-100 animate-in fade-in slide-in-from-bottom-2 duration-300">
+        <div className="bg-white p-4 md:p-8 rounded-xl shadow-sm border border-gray-100 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <div className="max-w-2xl mx-auto">
             <h2 className="text-xl font-bold mb-6">Ingestão de Dados Cadastrais</h2>
             <form onSubmit={handleAddProduct} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-1">Nome do Produto</label>
                   <input 
