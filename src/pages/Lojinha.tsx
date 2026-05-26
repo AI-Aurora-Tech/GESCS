@@ -158,33 +158,56 @@ const Lojinha: React.FC = () => {
       // 1. Decrement stock for each item in DB AND check stock for Auto-Demand
       for (const item of cart) {
         const prod = item.product;
-        const newStock = prod.stock - item.quantity;
         
-        // Update product stock
-        await supabase
+        // Fetch the target product's current stock from database to be 100% safe
+        const { data: dbProd } = await supabase
           .from('products')
-          .update({ stock: newStock })
-          .eq('id', prod.id);
+          .select('stock, name, size')
+          .eq('id', prod.id)
+          .single();
 
-        // Record stock transaction log
-        await supabase.from('stock_transactions').insert([{
-          product_id: prod.id,
-          type: 'exit',
-          quantity: item.quantity,
-          user_id: profile?.id,
-          notes: `Venda PDV Ref: ${ref} (${methodStr === 'cash' ? 'Dinheiro' : 'PagBank'})`
-        }]);
+        const currentDbStock = dbProd ? dbProd.stock : prod.stock;
 
-        // Demand trigger if stock runs dry (<= 0)
-        if (newStock <= 0) {
+        if (currentDbStock > 0) {
+          const newStock = Math.max(0, currentDbStock - item.quantity);
+          
+          // Update product stock
+          await supabase
+            .from('products')
+            .update({ stock: newStock })
+            .eq('id', prod.id);
+
+          // Record stock transaction log
+          await supabase.from('stock_transactions').insert([{
+            product_id: prod.id,
+            type: 'exit',
+            quantity: item.quantity,
+            user_id: profile?.id,
+            notes: `Venda PDV Ref: ${ref} (${methodStr === 'cash' ? 'Dinheiro' : 'PagBank'})`
+          }]);
+
+          // Demand trigger if stock ran dry
+          if (newStock === 0) {
+            await supabase.from('lojinha_demands').insert([{
+              product_id: prod.id,
+              title: `Reposição Automática por Sem Estoque: ${prod.name}`,
+              description: `O item ${prod.name}${prod.size ? ` (${prod.size})` : ''} acabou no estoque devido à venda PDV Ref ${ref}. Gerada demanda imediata para compra de reposição.`,
+              priority: 'Alta',
+              status: 'Pendente',
+              user_id: profile?.id,
+              user_name: 'Sistema (PDV PagBank)'
+            }]);
+          }
+        } else {
+          // If product is already out of stock (<= 0), create a high-priority demand and do not update stock
           await supabase.from('lojinha_demands').insert([{
             product_id: prod.id,
-            title: `Reposição Automática por Sem Estoque: ${prod.name}`,
-            description: `O item ${prod.name}${prod.size ? ` (${prod.size})` : ''} acabou no estoque devido à venda PDV Ref ${ref}. Gerada demanda imediata para compra de reposição.`,
+            title: `Produto Vendido Sem Estoque: ${prod.name}`,
+            description: `Venda realizada de ${item.quantity}x ${prod.name}${prod.size ? ` (${prod.size})` : ''} com estoque esgotado. Ref: ${ref}. Gerada demanda imediata para compra urgente de reposição.`,
             priority: 'Alta',
             status: 'Pendente',
             user_id: profile?.id,
-            user_name: 'Sistema (PDV PagBank)'
+            user_name: 'Sistema (Autodemanda)'
           }]);
         }
       }
@@ -228,9 +251,6 @@ const Lojinha: React.FC = () => {
         localStorage.setItem('terminal_ip', terminalIp);
         setPdvModalAmount(total);
 
-        // Process the database sale immediately so it shows in reports, inventory, and ledger
-        await completePdvSale(reference, 'PagBank');
-        
         // Attempt cloud pre-request to PagBank
         try {
           await fetch('/api/pagbank/pay', {

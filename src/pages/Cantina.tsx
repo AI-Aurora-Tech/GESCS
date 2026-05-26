@@ -147,9 +147,6 @@ const Cantina: React.FC = () => {
       try {
         localStorage.setItem('cantina_terminal_ip', cantinaTerminalIp);
         setCantinaModalAmount(total);
-
-        // Process the database sale immediately so it shows in reports, inventory, and ledger
-        await completeCantinaSale(reference, 'PagBank');
         
         try {
           await fetch('/api/pagbank/pay', {

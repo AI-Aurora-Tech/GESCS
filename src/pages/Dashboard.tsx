@@ -37,16 +37,19 @@ const Dashboard: React.FC = () => {
 
   const fetchStats = async () => {
     try {
-      // Lojinha Sales (sum of stock_transactions where type is 'out')
+      // Lojinha Sales (sum of stock_transactions where type is 'out' or 'exit')
       let lojinhaTotal = 0;
       try {
         const { data: lojinhaData, error: lojinhaError } = await supabase
           .from('stock_transactions')
-          .select('quantity, products(price)')
-          .eq('type', 'out');
+          .select('quantity, products(price, sale_price)')
+          .in('type', ['out', 'exit']);
         
         if (!lojinhaError && lojinhaData) {
-          lojinhaTotal = lojinhaData.reduce((acc, curr: any) => acc + ((Number(curr.quantity) || 0) * (Number(curr.products?.price) || 0)), 0);
+          lojinhaTotal = lojinhaData.reduce((acc, curr: any) => {
+            const pr = Number(curr.products?.sale_price) || Number(curr.products?.price) || 0;
+            return acc + ((Number(curr.quantity) || 0) * pr);
+          }, 0);
         }
       } catch (e) {}
 
