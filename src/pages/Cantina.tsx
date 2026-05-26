@@ -33,7 +33,7 @@ interface FinancialRecord {
 
 const Cantina: React.FC = () => {
   const { user, profile, loading: authLoading } = useAuth();
-  const [activeTab, setActiveTab] = useState<'financeiro' | 'materiais' | 'receitas' | 'margem' | 'banco' | 'movimentacao' | 'relatorios' | 'configuracoes'>('financeiro');
+  const [activeTab, setActiveTab] = useState<'financeiro' | 'pdv_cantina' | 'materiais' | 'receitas' | 'margem' | 'banco' | 'movimentacao' | 'relatorios' | 'configuracoes'>('financeiro');
   const [records, setRecords] = useState<FinancialRecord[]>([]);
   const [materials, setMaterials] = useState<any[]>([]);
   const [ingredients, setIngredients] = useState<any[]>([]);
@@ -45,6 +45,151 @@ const Cantina: React.FC = () => {
   const [isProductionModalOpen, setIsProductionModalOpen] = useState(false);
   const [selectedRecipe, setSelectedRecipe] = useState<any>(null);
   const [productionQuantity, setProductionQuantity] = useState(1);
+  
+  // Cantina / PDV Checkout state variables
+  const [cantinaCart, setCantinaCart] = useState<{ id: string; name: string; price: number; quantity: number }[]>([]);
+  const [cantinaTerminalIp, setCantinaTerminalIp] = useState(localStorage.getItem('cantina_terminal_ip') || 'localhost:1337');
+  const [cantinaPaymentStatus, setCantinaPaymentStatus] = useState<'idle' | 'sending' | 'waiting' | 'approved' | 'failed'>('idle');
+  const [cantinaPaymentError, setCantinaPaymentError] = useState('');
+  const [cantinaActivePaymentMethod, setCantinaActivePaymentMethod] = useState<'credit_card' | 'debit_card' | 'pix' | 'cash'>('credit_card');
+  const [cantinaCurrentTransactionRef, setCantinaCurrentTransactionRef] = useState('');
+  const [cantinaSearchTerm, setCantinaSearchTerm] = useState('');
+
+  const addCantinaCart = (item: any) => {
+    setCantinaCart(prev => {
+      const existing = prev.find(i => i.id === item.id);
+      if (existing) {
+        return prev.map(i => i.id === item.id ? { ...i, quantity: i.quantity + 1 } : i);
+      }
+      return [...prev, { id: item.id, name: item.name, price: item.price, quantity: 1 }];
+    });
+  };
+
+  const removeCantinaCart = (id: string) => {
+    setCantinaCart(prev => prev.filter(i => i.id !== id));
+  };
+
+  const updateCantinaQuantity = (id: string, val: number) => {
+    setCantinaCart(prev => prev.map(item => {
+      if (item.id === id) {
+        return { ...item, quantity: Math.max(1, item.quantity + val) };
+      }
+      return item;
+    }));
+  };
+
+  const getCantinaCartTotal = () => {
+    return cantinaCart.reduce((acc, i) => acc + (i.price * i.quantity), 0);
+  };
+
+  const completeCantinaSale = async (ref: string, methodStr: string) => {
+    try {
+      const totalAmount = getCantinaCartTotal();
+      const itemsText = cantinaCart.map(i => `${i.quantity}x ${i.name}`).join(', ');
+
+      // 1. Decrement materials stock inside `cantina_materials` table
+      for (const item of cantinaCart) {
+        const { data: matData } = await supabase
+          .from('cantina_materials')
+          .select('stock')
+          .eq('id', item.id)
+          .single();
+
+        if (matData) {
+          const newStock = Math.max(0, matData.stock - item.quantity);
+          await supabase
+            .from('cantina_materials')
+            .update({ stock: newStock })
+            .eq('id', item.id);
+        }
+      }
+
+      // 2. Insert into `financial_records` inside Supabase
+      const fullDesc = `PDV Cantina: ${itemsText} - Ref #${ref} (${methodStr === 'cash' ? 'Dinheiro' : 'PagBank'})`;
+      await supabase.from('financial_records').insert([{
+        type: 'income',
+        amount: totalAmount,
+        category: 'Venda Cantina',
+        description: fullDesc,
+        module: 'cantina',
+        branch: 'Grupo',
+        date: new Date().toISOString()
+      }]);
+
+      setCantinaPaymentStatus('approved');
+      setCantinaCart([]);
+      fetchRecords();
+      fetchMaterials();
+    } catch (err: any) {
+      console.error("Erro ao registrar a conclusão da venda Cantina:", err);
+      setCantinaPaymentError(err.message || 'Erro ao persistir a venda.');
+      setCantinaPaymentStatus('failed');
+    }
+  };
+
+  const handleCantinaCheckout = async () => {
+    if (cantinaCart.length === 0) return;
+    const total = getCantinaCartTotal();
+    const reference = `CT-${Date.now().toString().slice(-6)}`;
+    setCantinaCurrentTransactionRef(reference);
+    setCantinaPaymentError('');
+
+    if (cantinaActivePaymentMethod === 'cash') {
+      setCantinaPaymentStatus('sending');
+      await completeCantinaSale(reference, 'cash');
+    } else {
+      setCantinaPaymentStatus('sending');
+      try {
+        localStorage.setItem('cantina_terminal_ip', cantinaTerminalIp);
+        
+        await fetch('/api/pagbank/pay', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            amount: total,
+            reference,
+            items: cantinaCart.map(i => ({
+              name: i.name,
+              quantity: i.quantity,
+              price: i.price
+            })),
+            module: 'cantina',
+            paymentMethod: cantinaActivePaymentMethod,
+            terminalIp: cantinaTerminalIp
+          })
+        });
+
+        setCantinaPaymentStatus('waiting');
+
+        try {
+          fetch(`http://${cantinaTerminalIp}/api/v1/payment`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            mode: 'cors',
+            body: JSON.stringify({
+              amount: Math.round(total * 100),
+              paymentMethod: cantinaActivePaymentMethod === 'debit_card' ? 2 : 1,
+              installments: 1,
+              userReference: reference
+            })
+          }).then(async (localRes) => {
+            const localResult = await localRes.json();
+            if (localResult.success || localResult.status === 'APPROVED') {
+              await completeCantinaSale(reference, 'PagBank');
+            }
+          }).catch(e => {
+            console.warn("Direct native PlugPag connection inactive, falling back to cantina simulator.");
+          });
+        } catch (localErr) {
+          console.warn("Local network dispatch exception:", localErr);
+        }
+      } catch (err: any) {
+        console.error("Erro ao processar PagBank Cantina:", err);
+        setCantinaPaymentStatus('failed');
+        setCantinaPaymentError(err.message || 'Falha ao processar checkout.');
+      }
+    }
+  };
   
   const [newIngredient, setNewIngredient] = useState({
     name: '',
@@ -310,6 +455,7 @@ const Cantina: React.FC = () => {
 
   const allTabs = [
     { id: 'financeiro', label: 'Financeiro', icon: DollarSign },
+    { id: 'pdv_cantina', label: 'Frente de Caixa (PDV)', icon: CreditCard },
     { id: 'materiais', label: 'Estoque Venda', icon: Plus },
     { id: 'receitas', label: 'Receitas/Produção', icon: FileText },
     { id: 'margem', label: 'Calculadora Margem', icon: TrendingUp },
@@ -445,6 +591,261 @@ const Cantina: React.FC = () => {
               </table>
             </div>
           </div>
+        </div>
+      )}
+
+      {activeTab === 'pdv_cantina' && (
+        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Left Column: Products for Sale */}
+            <div className="lg:col-span-7 bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col h-[600px]">
+              <div className="mb-4">
+                <h3 className="text-lg font-bold">Frente de Caixa (PDV) - Cantina</h3>
+                <p className="text-xs text-gray-500">Selecione os salgados, doces ou bebidas abaixo para registrar a venda.</p>
+                <div className="relative mt-3">
+                  <input
+                    type="text"
+                    placeholder="Pesquisar salgado, bebida, doce..."
+                    className="w-full pl-3 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    value={cantinaSearchTerm}
+                    onChange={(e) => setCantinaSearchTerm(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {/* Materials Grid */}
+              <div className="flex-1 overflow-y-auto pr-1 space-y-2">
+                {materials
+                  .filter(m => m.name.toLowerCase().includes(cantinaSearchTerm.toLowerCase()) || m.category.toLowerCase().includes(cantinaSearchTerm.toLowerCase()))
+                  .map(mat => {
+                    const inStock = mat.stock > 0;
+                    return (
+                      <div
+                        key={mat.id}
+                        onClick={() => addCantinaCart(mat)}
+                        className={cn(
+                          "flex items-center justify-between p-3 border rounded-xl cursor-pointer hover:border-blue-400 transition-all",
+                          inStock ? "border-gray-100 bg-gray-50/50" : "border-red-100 bg-red-50/20"
+                        )}
+                      >
+                        <div>
+                          <p className="text-sm font-bold text-gray-900">{mat.name}</p>
+                          <div className="flex items-center gap-2.5 mt-1">
+                            <span className="text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded uppercase font-bold text-[9px]">
+                              {mat.category}
+                            </span>
+                            <span className={cn(
+                              "text-[10px] font-bold px-1.5 py-0.5 rounded",
+                              inStock ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+                            )}>
+                              Estoque: {mat.stock} un
+                            </span>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm font-black text-gray-900">R$ {mat.price.toFixed(2)}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                {materials.length === 0 && (
+                  <div className="text-center py-12 text-gray-400">Nenhum material de cantina cadastrado.</div>
+                )}
+              </div>
+            </div>
+
+            {/* Right Column: Checkout Cart */}
+            <div className="lg:col-span-5 bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col h-[600px]">
+              <div className="border-b border-gray-100 pb-4 mb-4 flex justify-between items-center">
+                <div>
+                  <h3 className="text-lg font-bold">Carrinho da Cantina</h3>
+                  <p className="text-xs text-gray-500">Comandas e itens de compra rápida.</p>
+                </div>
+                {cantinaCart.length > 0 && (
+                  <button
+                    onClick={() => setCantinaCart([])}
+                    className="text-xs font-bold text-red-500 hover:text-red-700"
+                  >
+                    Limpar
+                  </button>
+                )}
+              </div>
+
+              {/* Item Cart List */}
+              <div className="flex-1 overflow-y-auto space-y-3 mb-4 pr-1">
+                {cantinaCart.map(item => (
+                  <div key={item.id} className="flex items-center justify-between p-3 border border-gray-100 rounded-xl bg-gray-50/30">
+                    <div className="flex-1 min-w-0 mr-3">
+                      <p className="text-xs font-bold text-gray-900 truncate">{item.name}</p>
+                      <p className="text-xs text-gray-500">R$ {(item.price * item.quantity).toFixed(2)}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => updateCantinaQuantity(item.id, -1)}
+                        className="p-1 border border-gray-200 rounded bg-white hover:bg-gray-50 font-bold"
+                      >
+                        -
+                      </button>
+                      <span className="text-xs font-black w-6 text-center">{item.quantity}</span>
+                      <button
+                        onClick={() => updateCantinaQuantity(item.id, 1)}
+                        className="p-1 border border-gray-200 rounded bg-white hover:bg-gray-50 font-bold"
+                      >
+                        +
+                      </button>
+                      <button
+                        onClick={() => removeCantinaCart(item.id)}
+                        className="p-1 text-red-500 hover:bg-red-50 rounded ml-1 font-bold"
+                      >
+                        x
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {cantinaCart.length === 0 && (
+                  <div className="flex flex-col items-center justify-center h-full text-center text-gray-400">
+                    <CreditCard size={40} className="mb-2 opacity-20" />
+                    <p className="text-sm">Carrinho da Cantina está vazio</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Settings & Method Checkout */}
+              {cantinaCart.length > 0 && (
+                <div className="border-t border-gray-100 pt-4 space-y-4">
+                  <div className="flex justify-between items-center bg-gray-50 p-3 rounded-xl border border-gray-100">
+                    <span className="text-sm font-bold text-gray-700">Subtotal:</span>
+                    <span className="text-xl font-black text-gray-900">R$ {getCantinaCartTotal().toFixed(2)}</span>
+                  </div>
+
+                  {/* Terminal CONFIG */}
+                  <div className="bg-amber-50/40 border border-amber-100 p-3 rounded-xl space-y-1.5">
+                    <div className="flex justify-between items-center">
+                      <label className="text-[10px] font-black uppercase text-amber-800">IP Moderninha Smart 2 (Cantina)</label>
+                      <span className="text-[9px] text-gray-400">Standard: 1337</span>
+                    </div>
+                    <input
+                      type="text"
+                      className="w-full px-3 py-1.5 bg-white border border-amber-200 rounded-lg text-xs"
+                      placeholder="localhost:1337"
+                      value={cantinaTerminalIp}
+                      onChange={(e) => setCantinaTerminalIp(e.target.value)}
+                    />
+                  </div>
+
+                  {/* Payment Mode Selection */}
+                  <div>
+                    <span className="text-[10px] font-black uppercase text-gray-400 block mb-2">Forma de Pagamento</span>
+                    <div className="grid grid-cols-4 gap-2">
+                      {[
+                        { id: 'credit_card', label: 'Crédito', sub: 'PagBank' },
+                        { id: 'debit_card', label: 'Débito', sub: 'PagBank' },
+                        { id: 'pix', label: 'Pix QR', sub: 'PagBank' },
+                        { id: 'cash', label: 'Dinheiro', sub: 'Caixa' }
+                      ].map(method => (
+                        <button
+                          key={method.id}
+                          type="button"
+                          onClick={() => setCantinaActivePaymentMethod(method.id as any)}
+                          className={cn(
+                            "p-2 rounded-lg border text-center transition-all flex flex-col items-center justify-center",
+                            cantinaActivePaymentMethod === method.id 
+                              ? "border-amber-500 bg-amber-50 text-amber-700 font-bold" 
+                              : "border-gray-200 hover:border-gray-300 text-gray-500"
+                          )}
+                        >
+                          <span className="text-xs">{method.label}</span>
+                          <span className="text-[8px] opacity-75">{method.sub}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Checkout Action CTA */}
+                  <button
+                    onClick={handleCantinaCheckout}
+                    className="w-full py-3 bg-amber-500 text-white rounded-xl font-bold hover:bg-amber-600 transition-all shadow-lg flex items-center justify-center gap-2"
+                  >
+                    <CreditCard size={18} /> Processar Venda Cantina (R$ {getCantinaCartTotal().toFixed(2)})
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Cantina POS Terminal Emulator Overlays */}
+          {cantinaPaymentStatus !== 'idle' && cantinaPaymentStatus !== 'approved' && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+              <div className="bg-white rounded-3xl shadow-2xl border border-gray-100 p-8 max-w-sm w-full text-center relative overflow-hidden">
+                <div className="w-56 h-72 bg-neutral-900 border-4 border-neutral-700 rounded-[2.5rem] p-4 mx-auto shadow-2xl relative flex flex-col justify-between overflow-hidden">
+                  <div className="w-12 h-1 bg-neutral-700 rounded-full mx-auto mb-2" />
+                  
+                  <div className="flex-1 bg-gradient-to-b from-amber-900 to-amber-950 rounded-2xl p-4 text-white flex flex-col justify-between">
+                    <div className="flex justify-between items-center text-[8px] opacity-75 mb-2 border-b border-white/10 pb-1">
+                      <span>CANTINA POS</span>
+                      <span>📶 Wi-Fi</span>
+                    </div>
+                    <p className="text-[10px] font-bold text-center opacity-90 uppercase">Cantina Escoteira</p>
+                    <p className="text-xs opacity-75 text-center mt-1">Ref: {cantinaCurrentTransactionRef}</p>
+                  </div>
+
+                  <div className="text-center my-3 text-white">
+                    <p className="text-xs text-amber-300 font-black uppercase">
+                      {cantinaPaymentStatus === 'sending' ? 'Enviando...' : 'Aguardando Aprovação'}
+                    </p>
+                    <p className="text-lg font-black mt-1">R$ {getCantinaCartTotal().toFixed(2)}</p>
+                  </div>
+
+                  <div className="text-center">
+                    <span className="inline-block px-1.5 py-0.5 rounded text-[8px] font-bold uppercase bg-yellow-400 text-black animate-pulse">
+                      Smart 2 Cantina
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-1.5 mt-3 pt-2 border-t border-neutral-800">
+                    <div className="w-full h-2.5 bg-neutral-800 rounded-sm" />
+                    <div className="w-full h-2.5 bg-neutral-800 rounded-sm" />
+                    <div className="w-full h-2.5 bg-neutral-800 rounded-sm" />
+                  </div>
+                </div>
+
+                <div className="mt-6">
+                  <h4 className="font-bold text-gray-900">Enviado para Moderninha Smart 2</h4>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Processando comanda no terminal IP <strong>{cantinaTerminalIp}</strong>.
+                  </p>
+                </div>
+
+                {/* Simulated Approval Controls */}
+                <div className="mt-6 p-4 bg-amber-50/50 border border-amber-100 rounded-2xl space-y-3">
+                  <p className="text-[10px] font-black text-amber-800 uppercase">Simulador de Maquininha</p>
+                  <p className="text-xs text-gray-600">
+                    Aprove ou cancele a transação de cartão abaixo para simular o recebimento:
+                  </p>
+                  <div className="flex gap-2.5 pt-1.5">
+                    <button
+                      onClick={() => setCantinaPaymentStatus('idle')}
+                      className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 rounded-xl text-xs font-bold text-gray-600"
+                    >
+                      Recusar
+                    </button>
+                    <button
+                      onClick={async () => {
+                        await completeCantinaSale(cantinaCurrentTransactionRef, 'PagBank');
+                      }}
+                      className="flex-1 py-2 bg-amber-500 hover:bg-amber-600 rounded-xl text-xs font-black text-white shadow-lg shadow-amber-200"
+                    >
+                      Aprovar Venda
+                    </button>
+                  </div>
+                </div>
+
+                {cantinaPaymentError && (
+                  <p className="text-xs font-bold text-red-500 mt-3">{cantinaPaymentError}</p>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

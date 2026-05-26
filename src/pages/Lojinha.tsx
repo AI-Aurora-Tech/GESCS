@@ -88,6 +88,192 @@ const Lojinha: React.FC = () => {
     status: 'Pendente'
   });
 
+  // PagBank / PDV Checkout states
+  const [cart, setCart] = useState<{ product: Product; quantity: number }[]>([]);
+  const [terminalIp, setTerminalIp] = useState(localStorage.getItem('terminal_ip') || 'localhost:1337');
+  const [paymentStatus, setPaymentStatus] = useState<'idle' | 'sending' | 'waiting' | 'approved' | 'failed'>('idle');
+  const [paymentError, setPaymentError] = useState('');
+  const [activePdvTab, setActivePdvTab] = useState<'venda' | 'historico'>('venda');
+  const [posSearchTerm, setPosSearchTerm] = useState('');
+  const [pagBankSales, setPagBankSales] = useState<any[]>([]);
+  const [currentTransactionRef, setCurrentTransactionRef] = useState('');
+  const [activePaymentMethod, setActivePaymentMethod] = useState<'credit_card' | 'debit_card' | 'pix' | 'cash'>('credit_card');
+
+  const fetchPagBankSales = async () => {
+    try {
+      const res = await fetch('/api/pagbank/sales');
+      const data = await res.json();
+      if (data.success && data.sales) {
+        setPagBankSales(data.sales);
+      }
+    } catch (err) {
+      console.error("Erro ao carregar histórico PagBank:", err);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'pagvendas') {
+      fetchPagBankSales();
+    }
+  }, [activeTab]);
+
+  const addToCart = (product: Product) => {
+    setCart(prev => {
+      const existing = prev.find(item => item.product.id === product.id);
+      if (existing) {
+        return prev.map(item => item.product.id === product.id ? { ...item, quantity: item.quantity + 1 } : item);
+      }
+      return [...prev, { product, quantity: 1 }];
+    });
+  };
+
+  const updateCartQuantity = (productId: string, val: number) => {
+    setCart(prev => prev.map(item => {
+      if (item.product.id === productId) {
+        const nQ = Math.max(1, item.quantity + val);
+        return { ...item, quantity: nQ };
+      }
+      return item;
+    }));
+  };
+
+  const removeFromCart = (productId: string) => {
+    setCart(prev => prev.filter(item => item.product.id !== productId));
+  };
+
+  const getCartTotal = () => {
+    return cart.reduce((acc, item) => acc + (item.product.sale_price || item.product.price || 0) * item.quantity, 0);
+  };
+
+  const completePdvSale = async (ref: string, methodStr: string) => {
+    try {
+      const itemsText = cart.map(i => `${i.quantity}x ${i.product.name}`).join(', ');
+      const totalAmount = getCartTotal();
+      
+      // 1. Decrement stock for each item in DB AND check stock for Auto-Demand
+      for (const item of cart) {
+        const prod = item.product;
+        const newStock = prod.stock - item.quantity;
+        
+        // Update product stock
+        await supabase
+          .from('products')
+          .update({ stock: newStock })
+          .eq('id', prod.id);
+
+        // Record stock transaction log
+        await supabase.from('stock_transactions').insert([{
+          product_id: prod.id,
+          type: 'exit',
+          quantity: item.quantity,
+          user_id: profile?.id,
+          notes: `Venda PDV Ref: ${ref} (${methodStr === 'cash' ? 'Dinheiro' : 'PagBank'})`
+        }]);
+
+        // Demand trigger if stock runs dry (<= 0)
+        if (newStock <= 0) {
+          await supabase.from('lojinha_demands').insert([{
+            product_id: prod.id,
+            title: `Reposição Automática por Sem Estoque: ${prod.name}`,
+            description: `O item ${prod.name}${prod.size ? ` (${prod.size})` : ''} acabou no estoque devido à venda PDV Ref ${ref}. Gerada demanda imediata para compra de reposição.`,
+            priority: 'Alta',
+            status: 'Pendente',
+            user_id: profile?.id,
+            user_name: 'Sistema (PDV PagBank)'
+          }]);
+        }
+      }
+
+      // 2. Insert financial record
+      const fullDescription = `PDV Lojinha: ${itemsText} - Ref #${ref} (${methodStr === 'cash' ? 'Dinheiro' : 'PagBank'})`;
+      await supabase.from('financial_records').insert([{
+        type: 'income',
+        amount: totalAmount,
+        category: 'Venda Geral',
+        description: fullDescription,
+        module: 'lojinha',
+        branch: 'Grupo',
+        date: new Date().toISOString()
+      }]);
+
+      setPaymentStatus('approved');
+      setCart([]);
+      fetchData();
+      fetchPagBankSales();
+    } catch (err: any) {
+      console.error("Erro ao registrar a conclusão da venda:", err);
+      setPaymentError(err.message || 'Erro ao persistir a venda.');
+      setPaymentStatus('failed');
+    }
+  };
+
+  const handlePdvCheckout = async () => {
+    if (cart.length === 0) return;
+    const total = getCartTotal();
+    const reference = `LJ-${Date.now().toString().slice(-6)}`;
+    setCurrentTransactionRef(reference);
+    setPaymentError('');
+
+    if (activePaymentMethod === 'cash') {
+      setPaymentStatus('sending');
+      await completePdvSale(reference, 'cash');
+    } else {
+      setPaymentStatus('sending');
+      try {
+        localStorage.setItem('terminal_ip', terminalIp);
+        
+        // Attempt cloud pre-request to PagBank
+        await fetch('/api/pagbank/pay', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            amount: total,
+            reference,
+            items: cart.map(i => ({
+              name: i.product.name,
+              quantity: i.quantity,
+              price: i.product.sale_price || i.product.price || 0
+            })),
+            module: 'lojinha',
+            paymentMethod: activePaymentMethod,
+            terminalIp
+          })
+        });
+
+        // Toggle wait status for local terminal approval or simulation fallback
+        setPaymentStatus('waiting');
+        
+        // Non-blocking trigger local API of terminal (PlugPag local protocol)
+        try {
+          fetch(`http://${terminalIp}/api/v1/payment`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            mode: 'cors',
+            body: JSON.stringify({
+              amount: Math.round(total * 100),
+              paymentMethod: activePaymentMethod === 'debit_card' ? 2 : 1,
+              installments: 1,
+              userReference: reference
+            })
+          }).then(async (localRes) => {
+            const localResult = await localRes.json();
+            if (localResult.success || localResult.status === 'APPROVED') {
+              await completePdvSale(reference, 'PagBank');
+            }
+          }).catch(err => {
+            console.warn("Direct native HTTP PlugPag connection inactive, falling back to local emulator overlay.");
+          });
+        } catch (localErr) {
+          console.warn("Local terminal dispatch failed, displaying safe emulation helper:", localErr);
+        }
+      } catch (err: any) {
+        console.error("Erro na comunicação PagBank:", err);
+        setPaymentStatus('failed');
+        setPaymentError(err.message || 'Falha ao processar checkout.');
+      }
+    }
+  };
+
   useEffect(() => {
     if (!user || authLoading) return;
 
@@ -900,19 +1086,362 @@ const Lojinha: React.FC = () => {
       )}
 
       {activeTab === 'pagvendas' && (
-        <div className="bg-white p-12 rounded-xl shadow-sm border border-gray-100 text-center animate-in fade-in slide-in-from-bottom-2 duration-300">
-          <div className="max-w-md mx-auto">
-            <div className="w-20 h-20 bg-yellow-100 text-yellow-600 rounded-full flex items-center justify-center mx-auto mb-6">
-              <CreditCard size={40} />
-            </div>
-            <h2 className="text-2xl font-bold mb-4">Integração PagVendas</h2>
-            <p className="text-gray-500 mb-8">
-              Conecte sua conta PagVendas para sincronizar vendas automaticamente e atualizar o estoque em tempo real.
-            </p>
-            <button className="px-8 py-3 bg-yellow-500 text-white rounded-lg font-bold hover:bg-yellow-600 transition-all">
-              Configurar Token de API
+        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+          {/* Sub Tab Selection */}
+          <div className="flex bg-gray-100 p-1 rounded-lg self-start max-w-md">
+            <button
+              onClick={() => setActivePdvTab('venda')}
+              className={cn(
+                "flex-1 px-4 py-2 text-xs font-bold rounded-md transition-all flex items-center justify-center gap-2",
+                activePdvTab === 'venda' ? "bg-white text-blue-600 shadow-sm" : "text-gray-500 hover:text-gray-900"
+              )}
+            >
+              <ShoppingBag size={14} /> Registrar Venda (PDV)
+            </button>
+            <button
+              onClick={() => {
+                setActivePdvTab('historico');
+                fetchPagBankSales();
+              }}
+              className={cn(
+                "flex-1 px-4 py-2 text-xs font-bold rounded-md transition-all flex items-center justify-center gap-2",
+                activePdvTab === 'historico' ? "bg-white text-blue-600 shadow-sm" : "text-gray-500 hover:text-gray-900"
+              )}
+            >
+              <History size={14} /> Histórico PagBank
             </button>
           </div>
+
+          {activePdvTab === 'venda' && (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Product Shelf / Search (Left) */}
+              <div className="lg:col-span-7 bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col h-[600px]">
+                <div className="mb-4">
+                  <h3 className="text-lg font-bold mb-1">Pesquisar Produtos</h3>
+                  <p className="text-xs text-gray-500">Adicione itens ao carrinho clicando nos cards abaixo.</p>
+                  
+                  <div className="relative mt-3">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                    <input
+                      type="text"
+                      placeholder="Pesquisar por nome ou código de barras..."
+                      className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                      value={posSearchTerm}
+                      onChange={(e) => setPosSearchTerm(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                {/* Grid */}
+                <div className="flex-1 overflow-y-auto pr-1 space-y-2">
+                  {products
+                    .filter(p => p.name.toLowerCase().includes(posSearchTerm.toLowerCase()) || (p.barcode && p.barcode.includes(posSearchTerm)))
+                    .map(product => {
+                      const inStock = product.stock > 0;
+                      return (
+                        <div
+                          key={product.id}
+                          onClick={() => addToCart(product)}
+                          className={cn(
+                            "flex items-center justify-between p-3 border rounded-xl cursor-pointer hover:border-blue-400 transition-all",
+                            inStock ? "border-gray-100 bg-gray-50/50" : "border-red-100 bg-red-50/20"
+                          )}
+                        >
+                          <div>
+                            <p className="text-sm font-bold text-gray-900">{product.name}{product.size ? ` (${product.size})` : ''}</p>
+                            <div className="flex items-center gap-3 mt-1">
+                              <span className="text-[10px] text-gray-400 font-mono">Barras: {product.barcode || 'N/A'}</span>
+                              <span className={cn(
+                                "text-[10px] font-bold px-1.5 py-0.5 rounded",
+                                inStock ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+                              )}>
+                                Estoque: {product.stock} un
+                              </span>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-sm font-black text-gray-900">R$ {(product.sale_price || product.price || 0).toFixed(2)}</p>
+                            <span className="text-[10px] text-gray-400 font-medium">{product.category}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  
+                  {products.length === 0 && (
+                    <div className="text-center py-12 text-gray-400">Nenhum produto cadastrado no estoque.</div>
+                  )}
+                </div>
+              </div>
+
+              {/* Shopping Cart & Checkout (Right) */}
+              <div className="lg:col-span-5 bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col h-[600px]">
+                <div className="border-b border-gray-100 pb-4 mb-4 flex justify-between items-center">
+                  <div>
+                    <h3 className="text-lg font-bold">Carrinho de Compras</h3>
+                    <p className="text-xs text-gray-500">Itens selecionados para a venda.</p>
+                  </div>
+                  {cart.length > 0 && (
+                    <button
+                      onClick={() => setCart([])}
+                      className="text-xs font-bold text-red-500 hover:text-red-700"
+                    >
+                      Limpar
+                    </button>
+                  )}
+                </div>
+
+                {/* Items list */}
+                <div className="flex-1 overflow-y-auto space-y-3 mb-4 pr-1">
+                  {cart.map(item => (
+                    <div key={item.product.id} className="flex items-center justify-between p-3 border border-gray-100 rounded-xl bg-gray-50/30">
+                      <div className="flex-1 min-w-0 mr-3">
+                        <p className="text-xs font-bold text-gray-900 truncate">{item.product.name}{item.product.size ? ` (${item.product.size})` : ''}</p>
+                        <p className="text-xs text-gray-500">R$ {((item.product.sale_price || item.product.price || 0) * item.quantity).toFixed(2)}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => updateCartQuantity(item.product.id, -1)}
+                          className="p-1 border border-gray-200 rounded bg-white hover:bg-gray-50"
+                        >
+                          <Minus size={12} />
+                        </button>
+                        <span className="text-xs font-black w-6 text-center">{item.quantity}</span>
+                        <button
+                          onClick={() => addToCart(item.product)}
+                          className="p-1 border border-gray-200 rounded bg-white hover:bg-gray-50"
+                        >
+                          <Plus size={12} />
+                        </button>
+                        <button
+                          onClick={() => removeFromCart(item.product.id)}
+                          className="p-1 text-red-500 hover:bg-red-50 rounded ml-1"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+
+                  {cart.length === 0 && (
+                    <div className="flex flex-col items-center justify-center h-full text-center text-gray-400">
+                      <ShoppingBag size={40} className="mb-2 opacity-20" />
+                      <p className="text-sm">O carrinho está vazio</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Settings IP & Payment Methods */}
+                {cart.length > 0 && (
+                  <div className="border-t border-gray-100 pt-4 space-y-4">
+                    <div className="flex justify-between items-center bg-gray-50 p-3 rounded-xl border border-gray-100">
+                      <span className="text-sm font-bold text-gray-700">Total Geral:</span>
+                      <span className="text-xl font-black text-gray-900">R$ {getCartTotal().toFixed(2)}</span>
+                    </div>
+
+                    {/* Maquininha IP Configure */}
+                    <div className="bg-blue-50/30 border border-blue-100 p-3 rounded-xl space-y-1.5">
+                      <div className="flex justify-between items-center">
+                        <label className="text-[10px] font-black uppercase text-blue-700">IP da Moderninha Smart 2</label>
+                        <span className="text-[9px] text-gray-400 font-mono">PlugPag Port: 1337</span>
+                      </div>
+                      <input
+                        type="text"
+                        className="w-full px-3 py-1.5 bg-white border border-blue-200 rounded-lg text-xs"
+                        placeholder="Ex: localhost:1337 ou 192.168.1.150:1337"
+                        value={terminalIp}
+                        onChange={(e) => setTerminalIp(e.target.value)}
+                      />
+                    </div>
+
+                    {/* Payment Mode */}
+                    <div>
+                      <span className="text-[10px] font-black uppercase text-gray-400 block mb-2">Forma de Pagamento</span>
+                      <div className="grid grid-cols-4 gap-2">
+                        {[
+                          { id: 'credit_card', label: 'Crédito', sub: 'PagBank' },
+                          { id: 'debit_card', label: 'Débito', sub: 'PagBank' },
+                          { id: 'pix', label: 'Pix QR', sub: 'PagBank' },
+                          { id: 'cash', label: 'Dinheiro', sub: 'Caixa' }
+                        ].map(method => (
+                          <button
+                            key={method.id}
+                            type="button"
+                            onClick={() => setActivePaymentMethod(method.id as any)}
+                            className={cn(
+                              "p-2 rounded-lg border text-center transition-all flex flex-col items-center justify-center",
+                              activePaymentMethod === method.id 
+                                ? "border-blue-500 bg-blue-50 text-blue-600 font-bold" 
+                                : "border-gray-200 hover:border-gray-300 text-gray-500"
+                            )}
+                          >
+                            <span className="text-xs">{method.label}</span>
+                            <span className="text-[8px] opacity-75">{method.sub}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Checkout CTA */}
+                    <button
+                      onClick={handlePdvCheckout}
+                      className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-200 flex items-center justify-center gap-2"
+                    >
+                      <CreditCard size={18} /> Confirmar Venda (R$ {getCartTotal().toFixed(2)})
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {activePdvTab === 'historico' && (
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+              <div className="p-6 border-b border-gray-100 flex justify-between items-center">
+                <div>
+                  <h3 className="text-lg font-bold">Vendas Recentes via PagBank</h3>
+                  <p className="text-xs text-gray-500">Histórico de transações direcionadas à Moderninha Smart 2 e logs do PagBank.</p>
+                </div>
+                <button
+                  onClick={fetchPagBankSales}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-lg text-xs font-bold text-gray-700 flex items-center gap-1.5"
+                >
+                  <History size={12} /> Sincronizar PagBank
+                </button>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left min-w-[800px]">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Data</th>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Descrição / Árvore de Área</th>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Dispositivo</th>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Status</th>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Valor</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {pagBankSales.map((sale) => (
+                      <tr key={sale.id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 text-xs text-gray-500 whitespace-nowrap">
+                          {format(new Date(sale.date), 'dd/MM/yyyy HH:mm')}
+                        </td>
+                        <td className="px-6 py-4">
+                          <p className="text-sm font-bold text-gray-900">{sale.description}</p>
+                          <span className={cn(
+                            "inline-block text-[9px] font-black uppercase tracking-wider rounded px-1.5 py-0.5 mt-1",
+                            sale.module === 'cantina' ? "bg-amber-100 text-amber-700" : "bg-purple-100 text-purple-700"
+                          )}>
+                            {sale.module === 'cantina' ? 'Módulo Cantina' : 'Módulo Lojinha'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-xs font-medium text-gray-600">
+                          {sale.terminal}
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="px-2.5 py-1 bg-green-100 text-green-700 rounded-full text-[10px] font-black uppercase">
+                            {sale.status}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-right text-sm font-black text-gray-900">
+                          R$ {sale.amount.toFixed(2)}
+                        </td>
+                      </tr>
+                    ))}
+
+                    {pagBankSales.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="px-6 py-12 text-center text-gray-400">
+                          Nenhuma venda associada ao PagBank encontrada.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Payment Terminal Emulator / Modal Overlay */}
+          {paymentStatus !== 'idle' && paymentStatus !== 'approved' && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+              <div className="bg-white rounded-3xl shadow-2xl border border-gray-100 p-8 max-w-sm w-full text-center relative overflow-hidden">
+                {/* Simulated Moderninha Terminal Display */}
+                <div className="w-56 h-72 bg-neutral-900 border-4 border-neutral-700 rounded-[2.5rem] p-4 mx-auto shadow-2xl relative flex flex-col justify-between overflow-hidden">
+                  {/* Speaker Grill */}
+                  <div className="w-12 h-1 bg-neutral-700 rounded-full mx-auto mb-2" />
+                  
+                  {/* High Contrast Color POS Screen */}
+                  <div className="flex-1 bg-gradient-to-b from-blue-900 to-indigo-950 rounded-2xl p-4 text-white flex flex-col justify-between">
+                    <div>
+                      <div className="flex justify-between items-center text-[8px] opacity-75 mb-2 border-b border-white/10 pb-1">
+                        <span>PAGBANK POS</span>
+                        <span>📶 4G</span>
+                      </div>
+                      <p className="text-[10px] font-bold text-center opacity-90 uppercase">Cobrança Escoteira</p>
+                      <p className="text-xs opacity-75 text-center mt-1">Ref: {currentTransactionRef}</p>
+                    </div>
+
+                    <div className="text-center my-3">
+                      <p className="text-xs text-cyan-300 font-black uppercase">
+                        {paymentStatus === 'sending' ? 'Processando...' : 'Aprovação manual'}
+                      </p>
+                      <p className="text-lg font-black mt-1">R$ {getCartTotal().toFixed(2)}</p>
+                    </div>
+
+                    <div className="text-center">
+                      <span className="inline-block px-1.5 py-0.5 rounded text-[8px] font-bold uppercase bg-yellow-400 text-black animate-pulse">
+                        Sua Moderninha
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Machine Keyboard Buttons */}
+                  <div className="grid grid-cols-3 gap-1.5 mt-3 pt-2 border-t border-neutral-800">
+                    <div className="w-full h-2.5 bg-neutral-800 rounded-sm" />
+                    <div className="w-full h-2.5 bg-neutral-800 rounded-sm" />
+                    <div className="w-full h-2.5 bg-neutral-800 rounded-sm" />
+                  </div>
+                </div>
+
+                {/* Local Network Info */}
+                <div className="mt-6">
+                  <h4 className="font-bold text-gray-900">Processando Pagamento</h4>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Enviamos um sinal na rede local via PlugPag para a máquina no endereço <strong>{terminalIp}</strong>.
+                  </p>
+                </div>
+
+                {/* Simulated Approval Buttons Overlay */}
+                <div className="mt-6 p-4 bg-gray-50 border border-gray-100 rounded-2xl space-y-3">
+                  <p className="text-[10px] font-black text-gray-400 uppercase">Simulador Moderninha Smart 2</p>
+                  <p className="text-xs text-gray-600">
+                    Como a maquina real precisa de rede fisica local, você pode clicar abaixo para simular a resposta imediata:
+                  </p>
+                  <div className="flex gap-2.5 pt-1.5">
+                    <button
+                      onClick={() => setPaymentStatus('idle')}
+                      className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 rounded-xl text-xs font-bold text-gray-600"
+                    >
+                      Recusar
+                    </button>
+                    <button
+                      onClick={async () => {
+                        await completePdvSale(currentTransactionRef, 'PagBank');
+                      }}
+                      className="flex-1 py-2 bg-green-500 hover:bg-green-600 rounded-xl text-xs font-black text-white shadow-lg shadow-green-200"
+                    >
+                      Aprovar Venda
+                    </button>
+                  </div>
+                </div>
+
+                {paymentError && (
+                  <p className="text-xs font-bold text-red-500 mt-3">{paymentError}</p>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

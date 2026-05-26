@@ -45,6 +45,15 @@ const Financeiro: React.FC = () => {
     branch: 'all',
     dateRange: 'month'
   });
+  const [bankFilter, setBankFilter] = useState<'all' | 'pagbank' | 'cora' | 'cash'>('all');
+
+  const getBank = (record: FinancialRecord) => {
+    if (!record.description) return 'Dinheiro';
+    const desc = record.description.toLowerCase();
+    if (desc.includes('pagbank')) return 'PagBank';
+    if (desc.includes('cora')) return 'Cora';
+    return 'Dinheiro';
+  };
 
   const fetchData = async () => {
     let query = supabase.from('financial_records').select('*').order('date', { ascending: false });
@@ -64,8 +73,31 @@ const Financeiro: React.FC = () => {
     fetchData();
   }, [filter]);
 
-  const totalIncome = records.filter(r => r.type === 'income').reduce((acc, r) => acc + r.amount, 0);
-  const totalExpense = records.filter(r => r.type === 'expense').reduce((acc, r) => acc + r.amount, 0);
+  // Bank allocation derived calculations (always calculated from full set records to stay consistent)
+  const pagbankIncome = records.filter(r => r.type === 'income' && getBank(r) === 'PagBank').reduce((acc, r) => acc + r.amount, 0);
+  const pagbankExpense = records.filter(r => r.type === 'expense' && getBank(r) === 'PagBank').reduce((acc, r) => acc + r.amount, 0);
+  const pagbankBalance = pagbankIncome - pagbankExpense;
+
+  const coraIncome = records.filter(r => r.type === 'income' && getBank(r) === 'Cora').reduce((acc, r) => acc + r.amount, 0);
+  const coraExpense = records.filter(r => r.type === 'expense' && getBank(r) === 'Cora').reduce((acc, r) => acc + r.amount, 0);
+  const coraBalance = coraIncome - coraExpense;
+
+  const cashIncome = records.filter(r => r.type === 'income' && getBank(r) === 'Dinheiro').reduce((acc, r) => acc + r.amount, 0);
+  const cashExpense = records.filter(r => r.type === 'expense' && getBank(r) === 'Dinheiro').reduce((acc, r) => acc + r.amount, 0);
+  const cashBalance = cashIncome - cashExpense;
+
+  // Prune list content according to active bank tab selection
+  const filteredRecords = records.filter(r => {
+    if (bankFilter === 'all') return true;
+    const rBank = getBank(r).toLowerCase();
+    if (bankFilter === 'pagbank' && rBank === 'pagbank') return true;
+    if (bankFilter === 'cora' && rBank === 'cora') return true;
+    if (bankFilter === 'cash' && rBank === 'dinheiro') return true;
+    return false;
+  });
+
+  const totalIncome = filteredRecords.filter(r => r.type === 'income').reduce((acc, r) => acc + r.amount, 0);
+  const totalExpense = filteredRecords.filter(r => r.type === 'expense').reduce((acc, r) => acc + r.amount, 0);
   const balance = totalIncome - totalExpense;
 
   const chartData = [
@@ -131,6 +163,58 @@ const Financeiro: React.FC = () => {
         </div>
       </div>
 
+      {/* Segmented Bank / Cash Split */}
+      <div className="bg-slate-50 border border-slate-100 p-6 rounded-2xl">
+        <h3 className="text-xs font-black uppercase tracking-wider text-slate-500 mb-4 flex items-center gap-2">
+          📍 Saldos por Instituição Bancária & Meios
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* PagBank Card */}
+          <div className="bg-white p-4 rounded-xl border border-gray-100 flex items-center justify-between shadow-sm">
+            <div>
+              <span className="text-[9px] font-black uppercase tracking-wider text-purple-600 bg-purple-50 px-2 py-0.5 rounded-full inline-block mb-1">
+                PagBank MB
+              </span>
+              <p className="text-[10px] text-gray-400 font-medium">Lojinha & Cantina POS</p>
+              <p className="text-lg font-black text-gray-900 mt-0.5">R$ {pagbankBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+            </div>
+            <div className="text-[9px] text-gray-400 font-mono text-right">
+              <span className="text-green-600">+{pagbankIncome.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span> <br/>
+              <span className="text-red-500">-{pagbankExpense.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+            </div>
+          </div>
+
+          {/* Cora Bank Card */}
+          <div className="bg-white p-4 rounded-xl border border-gray-100 flex items-center justify-between shadow-sm">
+            <div>
+              <span className="text-[9px] font-black uppercase tracking-wider text-cyan-600 bg-cyan-50 px-2 py-0.5 rounded-full inline-block mb-1 font-sans">
+                Banco Cora (Futuro)
+              </span>
+              <p className="text-[10px] text-gray-400 font-medium">Transações Separadas</p>
+              <p className="text-lg font-black text-gray-400 mt-0.5">R$ {coraBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+            </div>
+            <div className="text-[9px] text-cyan-500 font-black tracking-wider uppercase">
+              Previsto
+            </div>
+          </div>
+
+          {/* Cash / Caixa Geral Card */}
+          <div className="bg-white p-4 rounded-xl border border-gray-100 flex items-center justify-between shadow-sm">
+            <div>
+              <span className="text-[9px] font-black uppercase tracking-wider text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full inline-block mb-1">
+                Caixa / Dinheiro
+              </span>
+              <p className="text-[10px] text-gray-400 font-medium">Dinheiro em Espécie</p>
+              <p className="text-lg font-black text-gray-900 mt-0.5">R$ {cashBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+            </div>
+            <div className="text-[9px] text-gray-400 font-mono text-right">
+              <span className="text-green-600">+{cashIncome.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span> <br/>
+              <span className="text-red-500">-{cashExpense.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Filters */}
         <div className="lg:col-span-1 space-y-6">
@@ -153,6 +237,29 @@ const Financeiro: React.FC = () => {
                       )}
                     >
                       {m.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Conta / Banco</label>
+                <div className="grid grid-cols-1 gap-2">
+                  {[
+                    { id: 'all', label: 'Todos os Bancos' },
+                    { id: 'pagbank', label: 'PagBank (Maquininha)' },
+                    { id: 'cora', label: 'Banco Cora (Futuro)' },
+                    { id: 'cash', label: 'Caixa / Dinheiro (Físico)' }
+                  ].map(b => (
+                    <button
+                      key={b.id}
+                      onClick={() => setBankFilter(b.id as any)}
+                      className={cn(
+                        "text-left px-4 py-2 rounded-lg text-sm font-medium transition-all",
+                        bankFilter === b.id ? "bg-blue-600 text-white shadow-lg shadow-blue-100" : "bg-gray-50 text-gray-600 hover:bg-gray-100"
+                      )}
+                    >
+                      {b.label}
                     </button>
                   ))}
                 </div>
@@ -229,7 +336,7 @@ const Financeiro: React.FC = () => {
               <h3 className="text-lg font-bold">Lançamentos Financeiros</h3>
               <div className="flex gap-2">
                 <span className="px-3 py-1 bg-blue-50 text-blue-600 rounded-full text-[10px] font-bold uppercase">
-                  {records.length} Lançamentos
+                  {filteredRecords.length} Lançamentos
                 </span>
               </div>
             </div>
@@ -239,12 +346,12 @@ const Financeiro: React.FC = () => {
                   <tr>
                     <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-wider">Data</th>
                     <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-wider">Descrição / Categoria</th>
-                    <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-wider">Módulo / Ramo</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-wider">Módulo / Ramo / Conta</th>
                     <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-wider text-right">Valor</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {records.map((record) => (
+                  {filteredRecords.map((record) => (
                     <tr key={record.id} className="hover:bg-gray-50 transition-colors">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <p className="text-sm font-bold text-gray-900">{format(new Date(record.date), 'dd/MM/yyyy')}</p>
@@ -264,6 +371,14 @@ const Financeiro: React.FC = () => {
                               {record.branch}
                             </span>
                           )}
+                          <span className={cn(
+                            "text-[10px] font-black uppercase px-2 py-0.5 rounded self-start tracking-wider",
+                            getBank(record) === 'PagBank' ? "bg-purple-100 text-purple-700" :
+                            getBank(record) === 'Cora' ? "bg-cyan-100 text-cyan-700" :
+                            "bg-emerald-100 text-emerald-700"
+                          )}>
+                            🏦 {getBank(record)}
+                          </span>
                         </div>
                       </td>
                       <td className="px-6 py-4 text-right">
@@ -276,7 +391,7 @@ const Financeiro: React.FC = () => {
                       </td>
                     </tr>
                   ))}
-                  {records.length === 0 && (
+                  {filteredRecords.length === 0 && (
                     <tr>
                       <td colSpan={4} className="px-6 py-12 text-center text-gray-400">
                         Nenhum lançamento encontrado para os filtros selecionados.
