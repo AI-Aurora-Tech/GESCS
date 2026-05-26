@@ -30,33 +30,57 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     // Check active sessions and subscribe to auth changes
+    let active = true;
+
     const fetchSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        await fetchProfile(session.user.id, session.user.email || '');
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!active) return;
+        setUser(session?.user ?? null);
+        if (session?.user) {
+          await fetchProfile(session.user.id, session.user.email || '');
+        }
+      } catch (err) {
+        console.error("Error fetching session:", err);
+      } finally {
+        if (active) setLoading(false);
       }
-      setLoading(false);
     };
 
     fetchSession();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (!active) return;
       setUser(session?.user ?? null);
       if (session?.user) {
-        fetchProfile(session.user.id, session.user.email || '').finally(() => {
-          setLoading(false);
-        });
+        try {
+          await fetchProfile(session.user.id, session.user.email || '');
+        } catch (err) {
+          console.error("Error setting profile on auth change:", err);
+        } finally {
+          if (active) setLoading(false);
+        }
       } else {
         setProfile(null);
-        setLoading(false);
+        if (active) setLoading(false);
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const fetchProfile = async (id: string, email: string) => {
+    const fallbackProfile: UserProfile = {
+      id: id,
+      email: email,
+      display_name: email.split('@')[0] || 'Usuário',
+      role: 'user_lojinha',
+      requires_password_change: false
+    };
+
     try {
       console.log(`Buscando perfil para UID: ${id}`);
       // Try to fetch via API to bypass RLS issues
@@ -106,58 +130,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 if (fetchContentType && fetchContentType.includes("application/json")) {
                   const newData = await fetchAgain.json();
                   setProfile(newData as UserProfile);
-                } else {
-                  setProfile({
-                    id: id,
-                    email: email,
-                    display_name: email.split('@')[0] || 'Usuário',
-                    role: 'user_lojinha',
-                    requires_password_change: false
-                  });
+                  return;
                 }
-              } else {
-                setProfile({
-                  id: id,
-                  email: email,
-                  display_name: email.split('@')[0] || 'Usuário',
-                  role: 'user_lojinha',
-                  requires_password_change: false
-                });
               }
-            } else {
-              throw new Error("O servidor não possui a rota da API configurada (Retornou HTML). Exporte/Faça deploy das atualizações.");
-            }
-          } else {
-            // If API fails (e.g. user already exists in auth but not profiles), fallback
-            const newProfile = {
-              id: id,
-              email: email,
-              display_name: email.split('@')[0] || 'Usuário',
-              role: 'user_lojinha',
-              requires_password_change: false
-            };
-
-            const { data: createdData, error: createError } = await supabase
-              .from('profiles')
-              .upsert([newProfile])
-              .select()
-              .single();
-
-            if (createdData) {
-              setProfile(createdData as UserProfile);
-            } else {
-              // Ultimate fallback so user is not stuck
-              setProfile(newProfile);
             }
           }
+          
+          // Fallback if API fails or returns HTML/other formats
+          const newProfile = {
+            id: id,
+            email: email,
+            display_name: email.split('@')[0] || 'Usuário',
+            role: 'user_lojinha' as const,
+            requires_password_change: false
+          };
+
+          const { data: createdData, error: createError } = await supabase
+            .from('profiles')
+            .upsert([newProfile])
+            .select()
+            .single();
+
+          if (createdData) {
+            setProfile(createdData as UserProfile);
+          } else {
+            setProfile(newProfile);
+          }
         } catch (apiError) {
-           console.error('API Error:', apiError);
+          console.error('API Error, using fallback:', apiError);
+          setProfile(fallbackProfile);
         }
       } else {
         setProfile(data as UserProfile);
       }
     } catch (e: any) {
+      console.error('Exception fetching profile, using fallback:', e);
       setErrorMsg('Exception: ' + e.message);
+      setProfile(fallbackProfile);
     }
   };
 
@@ -170,7 +179,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = async () => {
-    await supabase.auth.signOut();
+    try {
+      await supabase.auth.signOut();
+    } catch (err) {
+      console.error("Error signing out via Supabase, forcing local cleanup:", err);
+    } finally {
+      // Clean up Supabase session localStorage records to guarantee logout even when client is unconfigured
+      try {
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && (key.startsWith('sb-') || key.includes('supabase') || key.includes('auth'))) {
+            keysToRemove.push(key);
+          }
+        }
+        keysToRemove.forEach(k => localStorage.removeItem(k));
+      } catch (storageErr) {
+        console.error("LocalStorage clearing error:", storageErr);
+      }
+      setUser(null);
+      setProfile(null);
+      // Force redirect to login page
+      window.location.href = '/login';
+    }
   };
 
   return (

@@ -46,6 +46,23 @@ const Login: React.FC = () => {
         <h1 className="text-3xl font-black text-slate-900 mb-2 tracking-tight">GESCS Management</h1>
         <p className="text-slate-500 mb-10 font-medium">Sistema Integrado de Gestão do Grupo Escoteiro</p>
         
+        {(!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) && (
+          <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-2xl text-left text-amber-800 text-sm font-medium animate-in fade-in slide-in-from-top duration-350">
+            <h4 className="font-bold flex items-center gap-2 text-amber-950 mb-1">
+              <AlertCircle className="w-5 h-5 flex-shrink-0 text-amber-600" />
+              Banco de Dados Desconectado
+            </h4>
+            <div className="space-y-1.5 text-xs text-amber-700 leading-relaxed">
+              <p>
+                O sistema não pôde se conectar ao Supabase porque as variáveis de ambiente <code className="font-mono bg-amber-100 px-1 rounded text-amber-900 border border-amber-200">VITE_SUPABASE_URL</code> e <code className="font-mono bg-amber-100 px-1 rounded text-amber-900 border border-amber-200">VITE_SUPABASE_ANON_KEY</code> não foram preenchidas no ambiente de hospedagem da Vercel.
+              </p>
+              <p className="font-semibold text-amber-900">
+                ⚠️ Como resolver: Acesse as "Settings" do seu projeto na Vercel e adicione essas variáveis para que seus produtos da Lojinha/Cantina apareçam aqui!
+              </p>
+            </div>
+          </div>
+        )}
+
         {error && (
           <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-2xl flex items-center text-red-600 text-sm font-semibold animate-shake">
             <AlertCircle className="w-5 h-5 mr-3 flex-shrink-0" />
