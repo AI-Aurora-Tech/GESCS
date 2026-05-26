@@ -199,8 +199,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       setUser(null);
       setProfile(null);
-      // Force redirect to login page
-      window.location.href = '/login';
+      // Redirect to the origin root without path to avoid Vercel 404 for SPA.
+      // Once it loads the root path, ProtectedRoute will securely client-side navigate them to /login.
+      window.location.replace(window.location.origin);
     }
   };
 

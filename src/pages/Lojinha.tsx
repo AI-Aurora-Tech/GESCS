@@ -24,6 +24,15 @@ import Barcode from 'react-barcode';
 import { cn } from '../lib/utils';
 import { format } from 'date-fns';
 import Logo from '../components/Logo';
+import { 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer
+} from 'recharts';
 
 interface Product {
   id: string;
@@ -59,6 +68,8 @@ const Lojinha: React.FC = () => {
   const [isEditing, setIsEditing] = useState(false);
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [printQuantities, setPrintQuantities] = useState<Record<string, number>>({});
+  const [reportPeriod, setReportPeriod] = useState<'all' | 'today' | 'week' | 'month'>('month');
+  const [printMode, setPrintMode] = useState<'labels' | 'report'>('labels');
 
   // New Product Form
   const [newProduct, setNewProduct] = useState({
@@ -168,6 +179,15 @@ const Lojinha: React.FC = () => {
 
         const currentDbStock = dbProd ? dbProd.stock : prod.stock;
 
+        // Record stock transaction log (ALWAYS record sale event for dashboard, reports, and movements)
+        await supabase.from('stock_transactions').insert([{
+          product_id: prod.id,
+          type: 'exit',
+          quantity: item.quantity,
+          user_id: profile?.id,
+          notes: `Venda PDV Ref: ${ref} (${methodStr === 'cash' ? 'Dinheiro' : 'PagBank'})`
+        }]);
+
         if (currentDbStock > 0) {
           const newStock = Math.max(0, currentDbStock - item.quantity);
           
@@ -177,38 +197,63 @@ const Lojinha: React.FC = () => {
             .update({ stock: newStock })
             .eq('id', prod.id);
 
-          // Record stock transaction log
-          await supabase.from('stock_transactions').insert([{
-            product_id: prod.id,
-            type: 'exit',
-            quantity: item.quantity,
-            user_id: profile?.id,
-            notes: `Venda PDV Ref: ${ref} (${methodStr === 'cash' ? 'Dinheiro' : 'PagBank'})`
-          }]);
-
           // Demand trigger if stock ran dry
           if (newStock === 0) {
-            await supabase.from('lojinha_demands').insert([{
-              product_id: prod.id,
-              title: `Reposição Automática por Sem Estoque: ${prod.name}`,
-              description: `O item ${prod.name}${prod.size ? ` (${prod.size})` : ''} acabou no estoque devido à venda PDV Ref ${ref}. Gerada demanda imediata para compra de reposição.`,
-              priority: 'Alta',
-              status: 'Pendente',
-              user_id: profile?.id,
-              user_name: 'Sistema (PDV PagBank)'
-            }]);
+            try {
+              const { error: demErr } = await supabase.from('lojinha_demands').insert([{
+                product_id: prod.id,
+                title: `Reposição Automática por Sem Estoque: ${prod.name}`,
+                description: `O item ${prod.name}${prod.size ? ` (${prod.size})` : ''} acabou no estoque devido à venda PDV Ref ${ref}. Gerada demanda imediata para compra de reposição.`,
+                priority: 'high',
+                status: 'pending',
+                user_id: profile?.id,
+                user_name: 'Sistema (PDV PagBank)'
+              }]);
+              if (demErr) throw demErr;
+            } catch (demErr: any) {
+              console.warn("Could not insert product_id lojinha_demand, trying without it...", demErr);
+              try {
+                await supabase.from('lojinha_demands').insert([{
+                  title: `Reposição Automática por Sem Estoque: ${prod.name}`,
+                  description: `O item ${prod.name}${prod.size ? ` (${prod.size})` : ''} acabou no estoque devido à venda PDV Ref ${ref}. Gerada demanda imediata para compra de reposição.`,
+                  priority: 'high',
+                  status: 'pending',
+                  user_id: profile?.id,
+                  user_name: 'Sistema (PDV PagBank)'
+                }]);
+              } catch (fallbackDemErr) {
+                console.error("Unable to insert demand as fallback too:", fallbackDemErr);
+              }
+            }
           }
         } else {
           // If product is already out of stock (<= 0), create a high-priority demand and do not update stock
-          await supabase.from('lojinha_demands').insert([{
-            product_id: prod.id,
-            title: `Produto Vendido Sem Estoque: ${prod.name}`,
-            description: `Venda realizada de ${item.quantity}x ${prod.name}${prod.size ? ` (${prod.size})` : ''} com estoque esgotado. Ref: ${ref}. Gerada demanda imediata para compra urgente de reposição.`,
-            priority: 'Alta',
-            status: 'Pendente',
-            user_id: profile?.id,
-            user_name: 'Sistema (Autodemanda)'
-          }]);
+          try {
+            const { error: demErr } = await supabase.from('lojinha_demands').insert([{
+              product_id: prod.id,
+              title: `Produto Vendido Sem Estoque: ${prod.name}`,
+              description: `Venda realizada de ${item.quantity}x ${prod.name}${prod.size ? ` (${prod.size})` : ''} com estoque esgotado. Ref: ${ref}. Gerada demanda imediata para compra urgente de reposição.`,
+              priority: 'high',
+              status: 'pending',
+              user_id: profile?.id,
+              user_name: 'Sistema (Autodemanda)'
+            }]);
+            if (demErr) throw demErr;
+          } catch (demErr: any) {
+            console.warn("Could not insert product_id lojinha_demand, trying without it...", demErr);
+            try {
+              await supabase.from('lojinha_demands').insert([{
+                title: `Produto Vendido Sem Estoque: ${prod.name}`,
+                description: `Venda realizada de ${item.quantity}x ${prod.name}${prod.size ? ` (${prod.size})` : ''} com estoque esgotado. Ref: ${ref}. Gerada demanda imediata para compra urgente de reposição.`,
+                priority: 'high',
+                status: 'pending',
+                user_id: profile?.id,
+                user_name: 'Sistema (Autodemanda)'
+              }]);
+            } catch (fallbackDemErr) {
+              console.error("Unable to insert fallback dem:", fallbackDemErr);
+            }
+          }
         }
       }
 
@@ -341,7 +386,7 @@ const Lojinha: React.FC = () => {
 
     const { data: trans } = await supabase
       .from('stock_transactions')
-      .select('*, products(name, size)')
+      .select('*, products(name, size), profiles:user_id(display_name)')
       .order('created_at', { ascending: false });
     if (trans) setTransactions(trans);
 
@@ -534,8 +579,24 @@ const Lojinha: React.FC = () => {
   const handleAddDemand = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const priorityMap: Record<string, string> = {
+        'Baixa': 'low',
+        'Média': 'medium',
+        'Alta': 'high'
+      };
+      const statusMap: Record<string, string> = {
+        'Pendente': 'pending',
+        'Em Progresso': 'in_progress',
+        'Concluído': 'completed'
+      };
+      const dbPriority = priorityMap[newDemand.priority] || 'medium';
+      const dbStatus = statusMap[newDemand.status] || 'pending';
+
       const { error } = await supabase.from('lojinha_demands').insert([{
-        ...newDemand,
+        title: newDemand.title,
+        description: newDemand.description,
+        priority: dbPriority,
+        status: dbStatus,
         user_id: profile?.id,
         user_name: profile?.display_name
       }]);
@@ -585,8 +646,8 @@ const Lojinha: React.FC = () => {
             product_id: selectedProduct.id,
             title: `Reposição Urgente: ${selectedProduct.name}${selectedProduct.size ? ` (${selectedProduct.size})` : ''}`,
             description: `O estoque atingiu ${newStock} unidades (Mínimo: ${selectedProduct.min_stock || 0}). Necessário realizar compra para atender demanda.`,
-            priority: newStock < 0 ? 'Alta' : 'Média',
-            status: 'Pendente',
+            priority: newStock < 0 ? 'high' : 'medium',
+            status: 'pending',
             user_id: profile?.id,
             user_name: 'Sistema (Automático)'
           }]);
@@ -647,33 +708,184 @@ const Lojinha: React.FC = () => {
 
   return (
     <>
-      <div className="hidden print:block p-4">
-        <div className="flex flex-wrap gap-4 justify-start">
-          {products.filter(p => selectedProductIds.has(p.id)).flatMap(product => {
-            const qty = printQuantities[product.id] || 1;
-            return Array.from({ length: qty }).map((_, idx) => (
-              <div key={`${product.id}-${idx}`} className="flex flex-col items-center p-3 border border-gray-300 rounded-lg bg-white text-black shadow-sm break-inside-avoid w-44">
-                <Logo size={48} className="mb-2" />
-                <span className="font-bold text-[10px] uppercase text-center leading-tight h-8 flex flex-col items-center">
-                  <span>{product.name}{product.size ? ` (${product.size})` : ''}</span>
-                </span>
-                <span className="font-black text-sm mb-2 text-blue-700">
-                  R$ {product.price.toFixed(2)}
-                </span>
-                <div className="bg-white p-1 rounded">
-                  <Barcode 
-                    value={product.barcode} 
-                    height={30} 
-                    width={1.1} 
-                    fontSize={8} 
-                    margin={0}
-                  />
+      {printMode === 'labels' && (
+        <div className="hidden print:block p-4">
+          <div className="flex flex-wrap gap-4 justify-start">
+            {products.filter(p => selectedProductIds.has(p.id)).flatMap(product => {
+              const qty = printQuantities[product.id] || 1;
+              return Array.from({ length: qty }).map((_, idx) => (
+                <div key={`${product.id}-${idx}`} className="flex flex-col items-center p-3 border border-gray-300 rounded-lg bg-white text-black shadow-sm break-inside-avoid w-44">
+                  <Logo size={48} className="mb-2" />
+                  <span className="font-bold text-[10px] uppercase text-center leading-tight h-8 flex flex-col items-center">
+                    <span>{product.name}{product.size ? ` (${product.size})` : ''}</span>
+                  </span>
+                  <span className="font-black text-sm mb-2 text-blue-700">
+                    R$ {product.price.toFixed(2)}
+                  </span>
+                  <div className="bg-white p-1 rounded">
+                    <Barcode 
+                      value={product.barcode} 
+                      height={30} 
+                      width={1.1} 
+                      fontSize={8} 
+                      margin={0}
+                    />
+                  </div>
                 </div>
-              </div>
-            ));
-          })}
+              ));
+            })}
+          </div>
         </div>
-      </div>
+      )}
+
+      {printMode === 'report' && (() => {
+        const filteredTrans = transactions.filter(t => {
+          if (!t.created_at) return false;
+          const tDate = new Date(t.created_at);
+          const now = new Date();
+          if (reportPeriod === 'today') {
+            return tDate.toDateString() === now.toDateString();
+          }
+          if (reportPeriod === 'week') {
+            const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+            return tDate >= oneWeekAgo;
+          }
+          if (reportPeriod === 'month') {
+            const oneMonthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+            return tDate >= oneMonthAgo;
+          }
+          return true; // all
+        });
+
+        const lastTrans = filteredTrans.filter(t => t.type === 'exit');
+        const totalRevenue = lastTrans.reduce((acc, t) => {
+          const price = Number(t.products?.sale_price) || Number(t.products?.price) || 0;
+          return acc + (Number(t.quantity) * price);
+        }, 0);
+
+        const qtySold = lastTrans.reduce((acc, t) => acc + Number(t.quantity), 0);
+        const lowStockItems = products.filter(p => Number(p.stock) <= (Number(p.min_stock) || 5));
+        const totalInventoryValue = products.reduce((acc, p) => acc + (Number(p.stock) * (Number(p.purchase_price) || 0)), 0);
+        const totalInventorySaleValue = products.reduce((acc, p) => acc + (Number(p.stock) * (Number(p.sale_price) || Number(p.price) || 0)), 0);
+
+        return (
+          <div className="hidden print:block p-10 font-sans bg-white text-black min-h-screen">
+            <div className="flex justify-between items-center border-b-2 border-slate-900 pb-6 mb-8">
+              <div>
+                <h1 className="text-3xl font-black uppercase tracking-tight text-slate-900">GESCS Management - Lojinha</h1>
+                <p className="text-sm font-semibold text-slate-600">Relatório Consolidado de Vendas, Financeiro e Estoque</p>
+                <p className="text-xs text-slate-500 mt-1">Período Selecionado: {
+                  reportPeriod === 'today' ? 'Hoje' :
+                  reportPeriod === 'week' ? 'Últimos 7 dias' :
+                  reportPeriod === 'month' ? 'Últimos 30 dias' : 'Todo o período'
+                }</p>
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] font-bold uppercase text-slate-400">Gerado em</p>
+                <p className="text-sm font-bold">{format(new Date(), 'dd/MM/yyyy HH:mm')}</p>
+              </div>
+            </div>
+
+            {/* Resume Metrics */}
+            <div className="grid grid-cols-4 gap-4 mb-8">
+              <div className="border border-slate-200 p-4 rounded-lg">
+                <p className="text-[10px] font-black uppercase text-slate-500">Total Faturado</p>
+                <p className="text-xl font-bold mt-1">R$ {totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+              </div>
+              <div className="border border-slate-200 p-4 rounded-lg">
+                <p className="text-[10px] font-black uppercase text-slate-500">Unidades Vendidas</p>
+                <p className="text-xl font-bold mt-1">{qtySold} un</p>
+              </div>
+              <div className="border border-slate-200 p-4 rounded-lg">
+                <p className="text-[10px] font-black uppercase text-slate-500">Custo Total de Estoque</p>
+                <p className="text-xl font-bold mt-1">R$ {totalInventoryValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+              </div>
+              <div className="border border-slate-200 p-4 rounded-lg">
+                <p className="text-[10px] font-black uppercase text-slate-500">Valor de Venda Potencial</p>
+                <p className="text-xl font-bold mt-1">R$ {totalInventorySaleValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+              </div>
+            </div>
+
+            {/* Stock Warning List */}
+            <div className="space-y-4 mb-8">
+              <h3 className="text-sm font-black uppercase border-b border-slate-200 pb-2">Status do Estoque (Produtos Críticos)</h3>
+              {lowStockItems.length === 0 ? (
+                <p className="text-xs text-slate-500">Nenhum produto em nível crítico de estoque.</p>
+              ) : (
+                <table className="w-full text-left text-xs border border-slate-200 rounded-lg">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="p-2 border-b">Produto</th>
+                      <th className="p-2 border-b">Tamanho</th>
+                      <th className="p-2 border-b">Categoria</th>
+                      <th className="p-2 border-b text-center">Mínimo</th>
+                      <th className="p-2 border-b text-center">Atual</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lowStockItems.map(p => (
+                      <tr key={p.id} className="hover:bg-slate-50">
+                        <td className="p-2 border-b font-medium">{p.name}</td>
+                        <td className="p-2 border-b">{p.size || 'N/A'}</td>
+                        <td className="p-2 border-b">{p.category}</td>
+                        <td className="p-2 border-b text-center text-slate-500">{p.min_stock || 5}</td>
+                        <td className="p-2 border-b text-center font-bold text-red-600 bg-red-50/50">{p.stock}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* Latest Transactions */}
+            <div className="space-y-4">
+              <h3 className="text-sm font-black uppercase border-b border-slate-200 pb-2">Histórico de Transações do Período</h3>
+              {filteredTrans.length === 0 ? (
+                <p className="text-xs text-slate-500">Nenhuma transação registrada neste período.</p>
+              ) : (
+                <table className="w-full text-left text-[11px] border border-slate-200 rounded-lg">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="p-2 border-b">Data</th>
+                      <th className="p-2 border-b">Produto</th>
+                      <th className="p-2 border-b text-center">Operação</th>
+                      <th className="p-2 border-b text-center">Qtd</th>
+                      <th className="p-2 border-b text-right">Valor Unitário</th>
+                      <th className="p-2 border-b text-right">Valor Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredTrans.map(t => {
+                      const unitPrice = Number(t.products?.sale_price) || Number(t.products?.price) || 0;
+                      const totalVal = unitPrice * t.quantity;
+                      return (
+                        <tr key={t.id} className="hover:bg-slate-50">
+                          <td className="p-2 border-b text-slate-500">{t.created_at ? format(new Date(t.created_at), 'dd/MM/yyyy HH:mm') : '-'}</td>
+                          <td className="p-2 border-b font-medium">{t.products?.name}{t.products?.size ? ` (${t.products.size})` : ''}</td>
+                          <td className="p-2 border-b text-center uppercase font-bold text-[10px]">
+                            <span className={t.type === 'entry' ? "text-green-600 bg-green-50 px-1.5 py-0.5 rounded" : "text-red-600 bg-red-50 px-1.5 py-0.5 rounded"}>
+                              {t.type === 'entry' ? 'Entrada' : 'Saída'}
+                            </span>
+                          </td>
+                          <td className="p-2 border-b text-center font-bold">{t.quantity}</td>
+                          <td className="p-2 border-b text-right">R$ {unitPrice.toFixed(2)}</td>
+                          <td className="p-2 border-b text-right font-semibold">
+                            {t.type === 'exit' ? `R$ ${totalVal.toFixed(2)}` : '-'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            
+            <div className="mt-12 text-center text-[10px] text-slate-400 border-t border-slate-100 pt-6">
+              <p>GESCS Management • Sistema Homologado do Grupo Escoteiro</p>
+            </div>
+          </div>
+        );
+      })()}
 
       <div className="space-y-6 print:hidden">
         {showStockCheckAlert && (
@@ -1517,7 +1729,7 @@ const Lojinha: React.FC = () => {
                         {t.quantity}
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-500">
-                        {t.userName || 'Sistema'}
+                        {t.profiles?.display_name || t.userName || 'Sistema'}
                       </td>
                     </tr>
                   );
@@ -1527,6 +1739,247 @@ const Lojinha: React.FC = () => {
           </div>
         </div>
       )}
+
+      {activeTab === 'relatorios' && (() => {
+        const filteredTrans = transactions.filter(t => {
+          if (!t.created_at) return false;
+          const tDate = new Date(t.created_at);
+          const now = new Date();
+          if (reportPeriod === 'today') {
+            return tDate.toDateString() === now.toDateString();
+          }
+          if (reportPeriod === 'week') {
+            const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+            return tDate >= oneWeekAgo;
+          }
+          if (reportPeriod === 'month') {
+            const oneMonthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+            return tDate >= oneMonthAgo;
+          }
+          return true; // all
+        });
+
+        const lastTrans = filteredTrans.filter(t => t.type === 'exit');
+        const totalRevenue = lastTrans.reduce((acc, t) => {
+          const price = Number(t.products?.sale_price) || Number(t.products?.price) || 0;
+          return acc + (Number(t.quantity) * price);
+        }, 0);
+
+        const qtySold = lastTrans.reduce((acc, t) => acc + Number(t.quantity), 0);
+        const lowStockItems = products.filter(p => Number(p.stock) <= (Number(p.min_stock) || 5));
+        const totalInventoryValue = products.reduce((acc, p) => acc + (Number(p.stock) * (Number(p.purchase_price) || 0)), 0);
+
+        // Grouping sales by date for Recharts
+        const groupedSalesDate: { [key: string]: number } = {};
+        lastTrans.forEach(t => {
+          const dStr = format(new Date(t.created_at), 'dd/MM');
+          const price = Number(t.products?.sale_price) || Number(t.products?.price) || 0;
+          groupedSalesDate[dStr] = (groupedSalesDate[dStr] || 0) + (Number(t.quantity) * price);
+        });
+        const chartData = Object.keys(groupedSalesDate).map(k => ({
+          date: k,
+          valor: Number(groupedSalesDate[k].toFixed(2))
+        })).reverse();
+
+        // Top Selling Products
+        const salesStats: { [key: string]: { name: string; qty: number; total: number; size?: string } } = {};
+        lastTrans.forEach(t => {
+          const id = t.product_id;
+          const name = t.products?.name || 'Desconhecido';
+          const size = t.products?.size || '';
+          const qty = Number(t.quantity) || 0;
+          const price = Number(t.products?.sale_price) || Number(t.products?.price) || 0;
+          
+          if (!salesStats[id]) {
+            salesStats[id] = { name, qty: 0, total: 0, size };
+          }
+          salesStats[id].qty += qty;
+          salesStats[id].total += (qty * price);
+        });
+        const topSelling = Object.values(salesStats).sort((a, b) => b.qty - a.qty).slice(0, 5);
+
+        return (
+          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+            {/* Header & General Filter */}
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
+              <div>
+                <h2 className="text-xl font-black text-gray-900">Relatórios & Análise de Vendas</h2>
+                <p className="text-xs text-gray-500">Acompanhe métricas financeiras, vendas e níveis críticos de estoque.</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+                <div className="flex bg-gray-100 p-1 rounded-lg">
+                  {[
+                    { id: 'today', label: 'Hoje' },
+                    { id: 'week', label: '7 Dias' },
+                    { id: 'month', label: '30 Dias' },
+                    { id: 'all', label: 'Tudo' }
+                  ].map(p => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => setReportPeriod(p.id as any)}
+                      className={cn(
+                        "px-3 py-1.5 text-xs font-bold rounded-md transition-all",
+                        reportPeriod === p.id ? "bg-white text-blue-600 shadow-sm" : "text-gray-500 hover:text-gray-900"
+                      )}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPrintMode('report');
+                    setTimeout(() => {
+                      window.print();
+                    }, 150);
+                  }}
+                  className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700 transition shadow-md shadow-blue-100"
+                >
+                  <FileText size={14} className="mr-2" /> Exportar PDF (A4)
+                </button>
+              </div>
+            </div>
+
+            {/* Metrics cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+                <p className="text-xs font-black text-slate-400 uppercase">Receita Total</p>
+                <div className="flex items-baseline gap-1 mt-2">
+                  <span className="text-2xl font-black text-gray-900">R$ {totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+                <p className="text-xs font-black text-slate-400 uppercase">Itens Vendidos</p>
+                <div className="flex items-baseline gap-1 mt-2">
+                  <span className="text-2xl font-black text-gray-900">{qtySold} un</span>
+                </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+                <p className="text-xs font-black text-slate-400 uppercase">Custo Geral de Estoque</p>
+                <div className="flex items-baseline gap-1 mt-2">
+                  <span className="text-2xl font-black text-gray-900">R$ {totalInventoryValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 bg-red-50/15">
+                <p className="text-xs font-black text-red-500 uppercase">Estoque Crítico</p>
+                <div className="flex items-baseline gap-1 mt-2">
+                  <span className="text-2xl font-black text-red-700">{lowStockItems.length} itens</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Charts & Top lists */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Sales Chart */}
+              <div className="lg:col-span-8 bg-white p-6 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-start">
+                <h3 className="text-sm font-bold text-gray-900 mb-4 uppercase tracking-wider">Desempenho de Vendas (R$)</h3>
+                {chartData.length === 0 ? (
+                  <div className="flex-1 flex flex-col items-center justify-center p-12 text-gray-400 text-xs text-center min-h-[220px]">
+                    Sem movimentações financeiras no período.
+                  </div>
+                ) : (
+                  <div className="h-64 flex-1">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={chartData}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis dataKey="date" stroke="#94a3b8" fontSize={11} />
+                        <YAxis stroke="#94a3b8" fontSize={11} />
+                        <Tooltip formatter={(value) => [`R$ ${Number(value).toFixed(2)}`, 'Vendas']} />
+                        <Bar dataKey="valor" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </div>
+
+              {/* Best Sellers */}
+              <div className="lg:col-span-4 bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
+                <h3 className="text-sm font-bold text-gray-900 mb-4 uppercase tracking-wider">Produtos Mais Vendidos</h3>
+                {topSelling.length === 0 ? (
+                  <div className="p-12 text-center text-gray-400 text-xs">Nenhuma venda registrada.</div>
+                ) : (
+                  <div className="space-y-4">
+                    {topSelling.map((p, i) => (
+                      <div key={i} className="flex justify-between items-center p-3 bg-gray-50 rounded-xl border border-gray-100 hover:border-blue-200 transition">
+                        <div>
+                          <p className="font-bold text-xs text-gray-900 leading-tight">{p.name}</p>
+                          <p className="text-[10px] text-gray-400 mt-0.5">{p.size ? `Tamanho: ${p.size}` : 'Sem tamanho'}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-xs font-bold text-blue-600">{p.qty} un</p>
+                          <p className="text-[10px] font-semibold text-gray-400">R$ {p.total.toFixed(2)}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Critical Stock list */}
+            <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
+              <h3 className="text-sm font-bold text-gray-900 mb-4 uppercase tracking-wider text-red-650 flex items-center">
+                Atenção de Reposição de Estoque
+              </h3>
+              {lowStockItems.length === 0 ? (
+                <div className="py-8 text-center text-sm font-semibold text-green-600 bg-green-50/50 rounded-xl">
+                  ✓ Todos os produtos estão com níveis de estoque saudáveis!
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs text-gray-500">
+                    <thead className="bg-slate-50 uppercase text-[10px] text-slate-500 border-b border-gray-200">
+                      <tr>
+                        <th className="px-4 py-3 font-extrabold text-slate-800">Produto</th>
+                        <th className="px-4 py-3 font-extrabold text-slate-800">Tamanho</th>
+                        <th className="px-4 py-3 font-extrabold text-slate-800">Categoria</th>
+                        <th className="px-4 py-3 font-extrabold text-slate-800 text-center">Mínimo desejado</th>
+                        <th className="px-4 py-3 font-extrabold text-slate-800 text-center">Físico Atual</th>
+                        <th className="px-4 py-3 font-extrabold text-slate-800 text-right">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {lowStockItems.map(p => (
+                        <tr key={p.id} className="hover:bg-slate-50/50">
+                          <td className="px-4 py-3 font-bold text-slate-900">{p.name}</td>
+                          <td className="px-4 py-3 font-semibold">{p.size || 'Único'}</td>
+                          <td className="px-4 py-3">{p.category}</td>
+                          <td className="px-4 py-3 text-center text-slate-400">{p.min_stock || 5}</td>
+                          <td className="px-4 py-3 text-center bg-red-50/30">
+                            <span className="px-2 py-1 bg-red-100 text-red-700 rounded-md font-extrabold">
+                              {p.stock} un
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedProduct(p);
+                                setStockAction('entry');
+                                setQuantity(10);
+                                setIsStockModalOpen(true);
+                              }}
+                              className="px-2.5 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg font-black transition text-[10px]"
+                            >
+                              Repor Estoque
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {activeTab === 'demandas' && (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
@@ -1541,28 +1994,34 @@ const Lojinha: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {demands.map((demand) => (
-              <div key={demand.id} className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                <div className="flex justify-between items-start mb-4">
-                  <span className={cn(
-                    "px-2 py-1 rounded-full text-[10px] font-bold uppercase",
-                    demand.priority === 'Alta' ? "bg-red-100 text-red-600" : 
-                    demand.priority === 'Média' ? "bg-yellow-100 text-yellow-600" : "bg-blue-100 text-blue-600"
-                  )}>
-                    {demand.priority}
-                  </span>
-                  <span className="text-xs text-gray-400">
-                    {demand.created_at ? format(new Date(demand.created_at), 'dd/MM') : ''}
-                  </span>
+            {demands.map((demand) => {
+              const displayPriority = demand.priority === 'high' || demand.priority === 'Alta' ? 'Alta' :
+                                      demand.priority === 'low' || demand.priority === 'Baixa' ? 'Baixa' : 'Média';
+              const displayStatus = demand.status === 'pending' || demand.status === 'Pendente' ? 'Pendente' :
+                                    demand.status === 'in_progress' || demand.status === 'Em Progresso' ? 'Em Progresso' : 'Concluído';
+              return (
+                <div key={demand.id} className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                  <div className="flex justify-between items-start mb-4">
+                    <span className={cn(
+                      "px-2 py-1 rounded-full text-[10px] font-bold uppercase",
+                      displayPriority === 'Alta' ? "bg-red-100 text-red-650" : 
+                      displayPriority === 'Média' ? "bg-yellow-100 text-yellow-600" : "bg-blue-100 text-blue-600"
+                    )}>
+                      {displayPriority}
+                    </span>
+                    <span className="text-xs text-gray-400">
+                      {demand.created_at ? format(new Date(demand.created_at), 'dd/MM') : ''}
+                    </span>
+                  </div>
+                  <h4 className="font-bold text-gray-900 mb-2">{demand.title}</h4>
+                  <p className="text-sm text-gray-500 mb-4 line-clamp-2">{demand.description}</p>
+                  <div className="flex items-center justify-between pt-4 border-t border-gray-50">
+                    <span className="text-xs font-medium text-gray-400">Status: {displayStatus}</span>
+                    <button className="text-blue-600 text-xs font-bold hover:underline">Ver Detalhes</button>
+                  </div>
                 </div>
-                <h4 className="font-bold text-gray-900 mb-2">{demand.title}</h4>
-                <p className="text-sm text-gray-500 mb-4 line-clamp-2">{demand.description}</p>
-                <div className="flex items-center justify-between pt-4 border-t border-gray-50">
-                  <span className="text-xs font-medium text-gray-400">Status: {demand.status}</span>
-                  <button className="text-blue-600 text-xs font-bold hover:underline">Ver Detalhes</button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

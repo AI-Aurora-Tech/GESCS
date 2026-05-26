@@ -71,6 +71,17 @@ const Financeiro: React.FC = () => {
 
   useEffect(() => {
     fetchData();
+
+    const sub = supabase
+      .channel('financial-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'financial_records' }, () => {
+        fetchData();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(sub);
+    };
   }, [filter]);
 
   // Bank allocation derived calculations (always calculated from full set records to stay consistent)

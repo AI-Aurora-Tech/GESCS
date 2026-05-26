@@ -33,6 +33,41 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => {
     fetchStats();
+
+    const subStock = supabase
+      .channel('dashboard-stock-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'stock_transactions' }, () => {
+        fetchStats();
+      })
+      .subscribe();
+
+    const subFinance = supabase
+      .channel('dashboard-finance-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'financial_records' }, () => {
+        fetchStats();
+      })
+      .subscribe();
+
+    const subScout = supabase
+      .channel('dashboard-scout-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'scout_members' }, () => {
+        fetchStats();
+      })
+      .subscribe();
+
+    const subAsset = supabase
+      .channel('dashboard-asset-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'assets' }, () => {
+        fetchStats();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(subStock);
+      supabase.removeChannel(subFinance);
+      supabase.removeChannel(subScout);
+      supabase.removeChannel(subAsset);
+    };
   }, []);
 
   const fetchStats = async () => {

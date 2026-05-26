@@ -10,7 +10,8 @@ import {
   CreditCard,
   AlertTriangle,
   BarChart3,
-  FileText
+  FileText,
+  DollarSign
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { cn } from '../lib/utils';
@@ -34,6 +35,50 @@ const Scouts: React.FC = () => {
   const [members, setMembers] = useState<ScoutMember[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [selectedMemberForPayment, setSelectedMemberForPayment] = useState<ScoutMember | null>(null);
+  const [paymentAmount, setPaymentAmount] = useState(50.00);
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'pagbank' | 'cora'>('cash');
+  const [paymentBranch, setPaymentBranch] = useState<'Lobinho' | 'Escoteiro' | 'Senior' | 'Pioneiro' | 'Grupo'>('Grupo');
+  const [paymentCategory, setPaymentCategory] = useState('Mensalidade');
+  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [paymentSubmitting, setPaymentSubmitting] = useState(false);
+
+  const handleRegisterPayment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedMemberForPayment) return;
+    setPaymentSubmitting(true);
+    try {
+      const { error: finError } = await supabase.from('financial_records').insert([{
+        type: 'income',
+        amount: Number(paymentAmount),
+        category: paymentCategory,
+        description: `${paymentCategory} ref. ${selectedMemberForPayment.name} (${paymentMethod === 'cash' ? 'Dinheiro' : paymentMethod === 'pagbank' ? 'PagBank' : 'Cora'})`,
+        module: 'geral',
+        branch: paymentBranch,
+        date: new Date(paymentDate).toISOString()
+      }]);
+      if (finError) throw finError;
+
+      const { error: memError } = await supabase
+        .from('scout_members')
+        .update({
+          payment_status: 'paid',
+          last_update: new Date().toISOString()
+        })
+        .eq('id', selectedMemberForPayment.id);
+      if (memError) throw memError;
+
+      setIsPaymentModalOpen(false);
+      setSelectedMemberForPayment(null);
+      fetchMembers();
+    } catch (err) {
+      console.error("Error registering payment:", err);
+    } finally {
+      setPaymentSubmitting(false);
+    }
+  };
+
   const [newMember, setNewMember] = useState({
     paxtu_id: '',
     name: '',
@@ -190,6 +235,7 @@ const Scouts: React.FC = () => {
                     <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Status</th>
                     <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Pagamento</th>
                     <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Última Atualização</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -203,25 +249,77 @@ const Scouts: React.FC = () => {
                         {member.paxtu_id}
                       </td>
                       <td className="px-6 py-4">
-                        <span className={cn(
-                          "px-2 py-1 rounded-full text-[10px] font-bold uppercase",
-                          member.status === 'active' ? "bg-green-100 text-green-600" :
-                          member.status === 'exempt' ? "bg-blue-100 text-blue-600" : "bg-gray-100 text-gray-600"
-                        )}>
-                          {member.status === 'active' ? 'Ativo' : member.status === 'exempt' ? 'Isento' : 'Inativo'}
-                        </span>
+                        <select
+                          value={member.status}
+                          onChange={async (e) => {
+                            const newStatus = e.target.value;
+                            await supabase
+                              .from('scout_members')
+                              .update({ status: newStatus, last_update: new Date().toISOString() })
+                              .eq('id', member.id);
+                            fetchMembers();
+                          }}
+                          className={cn(
+                            "px-2 py-1 rounded-full text-[10px] font-bold uppercase border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-550",
+                            member.status === 'active' ? "bg-green-100 text-green-600" :
+                            member.status === 'exempt' ? "bg-blue-100 text-blue-600" : "bg-gray-100 text-gray-600"
+                          )}
+                        >
+                          <option value="active" className="text-gray-800">Ativo</option>
+                          <option value="exempt" className="text-gray-800">Isento</option>
+                          <option value="inactive" className="text-gray-800">Inativo</option>
+                        </select>
                       </td>
                       <td className="px-6 py-4">
-                        <span className={cn(
-                          "px-2 py-1 rounded-full text-[10px] font-bold uppercase",
-                          member.payment_status === 'paid' ? "bg-green-100 text-green-600" :
-                          member.payment_status === 'overdue' ? "bg-red-100 text-red-600" : "bg-blue-100 text-blue-600"
-                        )}>
-                          {member.payment_status === 'paid' ? 'Em dia' : member.payment_status === 'overdue' ? 'Inadimplente' : 'Isento'}
-                        </span>
+                        <select
+                          value={member.payment_status}
+                          onChange={async (e) => {
+                            const newPayStatus = e.target.value;
+                            await supabase
+                              .from('scout_members')
+                              .update({ payment_status: newPayStatus, last_update: new Date().toISOString() })
+                              .eq('id', member.id);
+                            
+                            if (newPayStatus === 'paid') {
+                              setSelectedMemberForPayment(member);
+                              setPaymentAmount(50.00);
+                              setPaymentMethod('cash');
+                              setPaymentCategory('Mensalidade');
+                              // Set formatted today date
+                              setPaymentDate(new Date().toISOString().split('T')[0]);
+                              setIsPaymentModalOpen(true);
+                            } else {
+                              fetchMembers();
+                            }
+                          }}
+                          className={cn(
+                            "px-2 py-1 rounded-full text-[10px] font-bold uppercase border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-550",
+                            member.payment_status === 'paid' ? "bg-green-100 text-green-600" :
+                            member.payment_status === 'overdue' ? "bg-red-100 text-red-600" : "bg-blue-100 text-blue-600"
+                          )}
+                        >
+                          <option value="paid" className="text-gray-800">Em dia</option>
+                          <option value="overdue" className="text-gray-800">Inadimplente</option>
+                          <option value="exempt" className="text-gray-800">Isento</option>
+                        </select>
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-500">
                         {member.last_update ? format(new Date(member.last_update), 'dd/MM/yyyy', { locale: ptBR }) : '-'}
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        <button
+                          onClick={() => {
+                            setSelectedMemberForPayment(member);
+                            setPaymentAmount(50.00);
+                            setPaymentMethod('cash');
+                            setPaymentCategory('Mensalidade');
+                            setPaymentDate(new Date().toISOString().split('T')[0]);
+                            setIsPaymentModalOpen(true);
+                          }}
+                          className="inline-flex items-center px-2.5 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-xs font-bold transition-all shadow-sm shadow-emerald-100 gap-1"
+                        >
+                          <DollarSign size={13} /> Receber
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -377,6 +475,106 @@ const Scouts: React.FC = () => {
                   className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium"
                 >
                   Salvar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Registrar Pagamento Modal */}
+      {isPaymentModalOpen && selectedMemberForPayment && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8 animate-in fade-in duration-200">
+            <h2 className="text-xl font-bold mb-2">Registrar Pagamento</h2>
+            <p className="text-sm text-gray-500 mb-6">Membro: <strong className="text-gray-900">{selectedMemberForPayment.name}</strong></p>
+            
+            <form onSubmit={handleRegisterPayment} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Valor (R$)</label>
+                <input 
+                  required
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg text-lg font-bold"
+                  value={paymentAmount}
+                  onChange={(e) => setPaymentAmount(parseFloat(e.target.value) || 0)}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Categoria de Entrada</label>
+                  <select 
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                    value={paymentCategory}
+                    onChange={(e) => setPaymentCategory(e.target.value)}
+                  >
+                    <option value="Mensalidade">Mensalidade</option>
+                    <option value="Taxa de Evento">Taxa de Evento</option>
+                    <option value="Doação">Doação</option>
+                    <option value="Lojinha / Outros">Outros</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Ramo / Destino</label>
+                  <select 
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                    value={paymentBranch}
+                    onChange={(e) => setPaymentBranch(e.target.value as any)}
+                  >
+                    <option value="Grupo">Grupo</option>
+                    <option value="Lobinho">Lobinho</option>
+                    <option value="Escoteiro">Escoteiro</option>
+                    <option value="Senior">Senior</option>
+                    <option value="Pioneiro">Pioneiro</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Forma / Conta Destino</label>
+                  <select 
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                    value={paymentMethod}
+                    onChange={(e) => setPaymentMethod(e.target.value as any)}
+                  >
+                    <option value="cash">Dinheiro (Físico)</option>
+                    <option value="pagbank">PagBank (Máquina/Pix)</option>
+                    <option value="cora">Cora (Cesta Básica/Transf)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Data Competência</label>
+                  <input 
+                    required
+                    type="date"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg text-sm"
+                    value={paymentDate}
+                    onChange={(e) => setPaymentDate(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setIsPaymentModalOpen(false);
+                    fetchMembers(); // refresh to keep status if changed without payment
+                  }}
+                  className="flex-1 py-2 border border-gray-200 rounded-lg text-sm font-medium"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="submit"
+                  disabled={paymentSubmitting}
+                  className="flex-1 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors flex items-center justify-center gap-1"
+                >
+                  {paymentSubmitting ? 'Registrando...' : 'Confirmar Recebimento'}
                 </button>
               </div>
             </form>
