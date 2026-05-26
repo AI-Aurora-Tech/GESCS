@@ -46,7 +46,7 @@ const Dashboard: React.FC = () => {
           .eq('type', 'out');
         
         if (!lojinhaError && lojinhaData) {
-          lojinhaTotal = lojinhaData.reduce((acc, curr: any) => acc + (curr.quantity * (curr.products?.price || 0)), 0);
+          lojinhaTotal = lojinhaData.reduce((acc, curr: any) => acc + ((Number(curr.quantity) || 0) * (Number(curr.products?.price) || 0)), 0);
         }
       } catch (e) {}
 
@@ -59,7 +59,8 @@ const Dashboard: React.FC = () => {
         
         if (!cantinaError && cantinaData) {
           cantinaBalance = cantinaData.reduce((acc, curr) => {
-            return curr.type === 'income' ? acc + curr.amount : acc - curr.amount;
+            const amt = Number(curr.amount) || 0;
+            return curr.type === 'income' ? acc + amt : acc - amt;
           }, 0);
         }
       } catch (e) {}
@@ -96,9 +97,9 @@ const Dashboard: React.FC = () => {
   };
 
   const chartData = [
-    (isGeral || role.includes('lojinha')) && { name: 'Lojinha', value: stats.lojinhaSales },
-    (isGeral || role.includes('cantina') || role.includes('financeiro')) && { name: 'Cantina', value: stats.cantinaBalance },
-  ].filter(Boolean);
+    (isGeral || role.includes('lojinha')) && { name: 'Lojinha', value: Number(stats.lojinhaSales) || 0 },
+    (isGeral || role.includes('cantina') || role.includes('financeiro')) && { name: 'Cantina', value: Number(stats.cantinaBalance) || 0 },
+  ].filter(Boolean) as { name: string; value: number }[];
 
   return (
     <div className="space-y-8">

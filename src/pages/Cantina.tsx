@@ -53,6 +53,7 @@ const Cantina: React.FC = () => {
   const [cantinaPaymentError, setCantinaPaymentError] = useState('');
   const [cantinaActivePaymentMethod, setCantinaActivePaymentMethod] = useState<'credit_card' | 'debit_card' | 'pix' | 'cash'>('credit_card');
   const [cantinaCurrentTransactionRef, setCantinaCurrentTransactionRef] = useState('');
+  const [cantinaModalAmount, setCantinaModalAmount] = useState<number>(0);
   const [cantinaSearchTerm, setCantinaSearchTerm] = useState('');
 
   const addCantinaCart = (item: any) => {
@@ -83,6 +84,10 @@ const Cantina: React.FC = () => {
   };
 
   const completeCantinaSale = async (ref: string, methodStr: string) => {
+    if (cantinaCart.length === 0) {
+      setCantinaPaymentStatus('approved');
+      return;
+    }
     try {
       const totalAmount = getCantinaCartTotal();
       const itemsText = cantinaCart.map(i => `${i.quantity}x ${i.name}`).join(', ');
@@ -141,23 +146,31 @@ const Cantina: React.FC = () => {
       setCantinaPaymentStatus('sending');
       try {
         localStorage.setItem('cantina_terminal_ip', cantinaTerminalIp);
+        setCantinaModalAmount(total);
+
+        // Process the database sale immediately so it shows in reports, inventory, and ledger
+        await completeCantinaSale(reference, 'PagBank');
         
-        await fetch('/api/pagbank/pay', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            amount: total,
-            reference,
-            items: cantinaCart.map(i => ({
-              name: i.name,
-              quantity: i.quantity,
-              price: i.price
-            })),
-            module: 'cantina',
-            paymentMethod: cantinaActivePaymentMethod,
-            terminalIp: cantinaTerminalIp
-          })
-        });
+        try {
+          await fetch('/api/pagbank/pay', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              amount: total,
+              reference,
+              items: cantinaCart.map(i => ({
+                name: i.name,
+                quantity: i.quantity,
+                price: i.price
+              })),
+              module: 'cantina',
+              paymentMethod: cantinaActivePaymentMethod,
+              terminalIp: cantinaTerminalIp
+            })
+          });
+        } catch (apiError) {
+          console.warn("PagBank cloud registration failed but local Cantina tracking is success:", apiError);
+        }
 
         setCantinaPaymentStatus('waiting');
 
@@ -342,8 +355,9 @@ const Cantina: React.FC = () => {
       setIsModalOpen(false);
       setNewRecord({ type: 'income', amount: 0, category: 'Venda Direta', description: '', is_extraordinary: false });
       fetchRecords();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      alert(`Erro ao lançar financeiro: ${err?.message || 'Verifique as regras do banco de dados (RLS).'}`);
     }
   };
 
@@ -356,8 +370,9 @@ const Cantina: React.FC = () => {
       setIsMaterialModalOpen(false);
       setNewMaterial({ name: '', category: 'Salgados', price: 0, stock: 0 });
       fetchMaterials();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      alert(`Erro ao cadastrar material/produto: ${err?.message || 'Verifique as regras do banco de dados (RLS).'}`);
     }
   };
 
@@ -369,8 +384,9 @@ const Cantina: React.FC = () => {
       setIsIngredientModalOpen(false);
       setNewIngredient({ name: '', stock: 0, unit: 'un', unit_cost: 0 });
       fetchIngredients();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      alert(`Erro ao cadastrar ingrediente: ${err?.message || 'Verifique as regras do banco de dados (RLS).'}`);
     }
   };
 
@@ -382,8 +398,9 @@ const Cantina: React.FC = () => {
       setIsRecipeModalOpen(false);
       setNewRecipe({ name: '', ingredients: [] });
       fetchRecipes();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      alert(`Erro ao cadastrar receita: ${err?.message || 'Verifique as regras do banco de dados (RLS).'}`);
     }
   };
 
@@ -793,7 +810,7 @@ const Cantina: React.FC = () => {
                     <p className="text-xs text-amber-300 font-black uppercase">
                       {cantinaPaymentStatus === 'sending' ? 'Enviando...' : 'Aguardando Aprovação'}
                     </p>
-                    <p className="text-lg font-black mt-1">R$ {getCantinaCartTotal().toFixed(2)}</p>
+                    <p className="text-lg font-black mt-1">R$ {(cantinaModalAmount || getCantinaCartTotal()).toFixed(2)}</p>
                   </div>
 
                   <div className="text-center">
@@ -1199,7 +1216,7 @@ const Cantina: React.FC = () => {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Custo (R$)</label>
-                  <input type="number" step="0.01" className="w-full px-4 py-2 border border-gray-200 rounded-lg" value={newIngredient.unit_cost} onChange={e => setNewIngredient({...newIngredient, unit_cost: parseFloat(e.target.value)})} />
+                  <input type="number" step="0.01" className="w-full px-4 py-2 border border-gray-200 rounded-lg" value={isNaN(newIngredient.unit_cost) ? '' : newIngredient.unit_cost} onChange={e => setNewIngredient({...newIngredient, unit_cost: parseFloat(e.target.value) || 0})} />
                 </div>
               </div>
               <div className="flex gap-3">
@@ -1276,8 +1293,8 @@ const Cantina: React.FC = () => {
                     type="number"
                     step="0.01"
                     className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                    value={newRecord.amount}
-                    onChange={(e) => setNewRecord({...newRecord, amount: parseFloat(e.target.value)})}
+                    value={isNaN(newRecord.amount) ? '' : newRecord.amount}
+                    onChange={(e) => setNewRecord({...newRecord, amount: parseFloat(e.target.value) || 0})}
                   />
                 </div>
                 <div>
@@ -1362,8 +1379,8 @@ const Cantina: React.FC = () => {
                     type="number"
                     step="0.01"
                     className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                    value={newMaterial.price}
-                    onChange={(e) => setNewMaterial({...newMaterial, price: parseFloat(e.target.value)})}
+                    value={isNaN(newMaterial.price) ? '' : newMaterial.price}
+                    onChange={(e) => setNewMaterial({...newMaterial, price: parseFloat(e.target.value) || 0})}
                   />
                 </div>
               </div>
@@ -1373,8 +1390,8 @@ const Cantina: React.FC = () => {
                   required
                   type="number"
                   className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                  value={newMaterial.stock}
-                  onChange={(e) => setNewMaterial({...newMaterial, stock: parseInt(e.target.value)})}
+                  value={isNaN(newMaterial.stock) ? '' : newMaterial.stock}
+                  onChange={(e) => setNewMaterial({...newMaterial, stock: parseInt(e.target.value) || 0})}
                 />
               </div>
               <div className="flex gap-3 pt-4">

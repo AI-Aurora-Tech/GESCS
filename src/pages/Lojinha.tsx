@@ -97,6 +97,7 @@ const Lojinha: React.FC = () => {
   const [posSearchTerm, setPosSearchTerm] = useState('');
   const [pagBankSales, setPagBankSales] = useState<any[]>([]);
   const [currentTransactionRef, setCurrentTransactionRef] = useState('');
+  const [pdvModalAmount, setPdvModalAmount] = useState<number>(0);
   const [activePaymentMethod, setActivePaymentMethod] = useState<'credit_card' | 'debit_card' | 'pix' | 'cash'>('credit_card');
 
   const fetchPagBankSales = async () => {
@@ -146,6 +147,10 @@ const Lojinha: React.FC = () => {
   };
 
   const completePdvSale = async (ref: string, methodStr: string) => {
+    if (cart.length === 0) {
+      setPaymentStatus('approved');
+      return;
+    }
     try {
       const itemsText = cart.map(i => `${i.quantity}x ${i.product.name}`).join(', ');
       const totalAmount = getCartTotal();
@@ -221,24 +226,32 @@ const Lojinha: React.FC = () => {
       setPaymentStatus('sending');
       try {
         localStorage.setItem('terminal_ip', terminalIp);
+        setPdvModalAmount(total);
+
+        // Process the database sale immediately so it shows in reports, inventory, and ledger
+        await completePdvSale(reference, 'PagBank');
         
         // Attempt cloud pre-request to PagBank
-        await fetch('/api/pagbank/pay', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            amount: total,
-            reference,
-            items: cart.map(i => ({
-              name: i.product.name,
-              quantity: i.quantity,
-              price: i.product.sale_price || i.product.price || 0
-            })),
-            module: 'lojinha',
-            paymentMethod: activePaymentMethod,
-            terminalIp
-          })
-        });
+        try {
+          await fetch('/api/pagbank/pay', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              amount: total,
+              reference,
+              items: cart.map(i => ({
+                name: i.product.name,
+                quantity: i.quantity,
+                price: i.product.sale_price || i.product.price || 0
+              })),
+              module: 'lojinha',
+              paymentMethod: activePaymentMethod,
+              terminalIp
+            })
+          });
+        } catch (apiError) {
+          console.warn("PagBank cloud registrar failed but local checkout remains active:", apiError);
+        }
 
         // Toggle wait status for local terminal approval or simulation fallback
         setPaymentStatus('waiting');
@@ -357,9 +370,9 @@ const Lojinha: React.FC = () => {
       });
       setActiveTab('estoque');
       fetchData();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert('Erro ao cadastrar produto. Verifique se todos os campos estão corretos.');
+      alert(`Erro ao cadastrar produto: ${err?.message || 'Verifique se todos os campos estão corretos ou se há problemas de permissão (RLS).'}`);
     }
   };
 
@@ -1386,7 +1399,7 @@ const Lojinha: React.FC = () => {
                       <p className="text-xs text-cyan-300 font-black uppercase">
                         {paymentStatus === 'sending' ? 'Processando...' : 'Aprovação manual'}
                       </p>
-                      <p className="text-lg font-black mt-1">R$ {getCartTotal().toFixed(2)}</p>
+                      <p className="text-lg font-black mt-1">R$ {(pdvModalAmount || getCartTotal()).toFixed(2)}</p>
                     </div>
 
                     <div className="text-center">

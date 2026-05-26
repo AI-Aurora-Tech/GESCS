@@ -74,16 +74,16 @@ const Financeiro: React.FC = () => {
   }, [filter]);
 
   // Bank allocation derived calculations (always calculated from full set records to stay consistent)
-  const pagbankIncome = records.filter(r => r.type === 'income' && getBank(r) === 'PagBank').reduce((acc, r) => acc + r.amount, 0);
-  const pagbankExpense = records.filter(r => r.type === 'expense' && getBank(r) === 'PagBank').reduce((acc, r) => acc + r.amount, 0);
+  const pagbankIncome = records.filter(r => r.type === 'income' && getBank(r) === 'PagBank').reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
+  const pagbankExpense = records.filter(r => r.type === 'expense' && getBank(r) === 'PagBank').reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
   const pagbankBalance = pagbankIncome - pagbankExpense;
 
-  const coraIncome = records.filter(r => r.type === 'income' && getBank(r) === 'Cora').reduce((acc, r) => acc + r.amount, 0);
-  const coraExpense = records.filter(r => r.type === 'expense' && getBank(r) === 'Cora').reduce((acc, r) => acc + r.amount, 0);
+  const coraIncome = records.filter(r => r.type === 'income' && getBank(r) === 'Cora').reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
+  const coraExpense = records.filter(r => r.type === 'expense' && getBank(r) === 'Cora').reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
   const coraBalance = coraIncome - coraExpense;
 
-  const cashIncome = records.filter(r => r.type === 'income' && getBank(r) === 'Dinheiro').reduce((acc, r) => acc + r.amount, 0);
-  const cashExpense = records.filter(r => r.type === 'expense' && getBank(r) === 'Dinheiro').reduce((acc, r) => acc + r.amount, 0);
+  const cashIncome = records.filter(r => r.type === 'income' && getBank(r) === 'Dinheiro').reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
+  const cashExpense = records.filter(r => r.type === 'expense' && getBank(r) === 'Dinheiro').reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
   const cashBalance = cashIncome - cashExpense;
 
   // Prune list content according to active bank tab selection
@@ -96,8 +96,8 @@ const Financeiro: React.FC = () => {
     return false;
   });
 
-  const totalIncome = filteredRecords.filter(r => r.type === 'income').reduce((acc, r) => acc + r.amount, 0);
-  const totalExpense = filteredRecords.filter(r => r.type === 'expense').reduce((acc, r) => acc + r.amount, 0);
+  const totalIncome = filteredRecords.filter(r => r.type === 'income').reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
+  const totalExpense = filteredRecords.filter(r => r.type === 'expense').reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
   const balance = totalIncome - totalExpense;
 
   const chartData = [
@@ -296,25 +296,36 @@ const Financeiro: React.FC = () => {
 
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
             <h3 className="font-bold mb-4">Distribuição</h3>
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={chartData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={80}
-                    paddingAngle={5}
-                    dataKey="value"
-                  >
-                    {chartData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
+            <div className="h-64 flex items-center justify-center">
+              {totalIncome > 0 || totalExpense > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={chartData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={60}
+                      outerRadius={80}
+                      paddingAngle={5}
+                      dataKey="value"
+                    >
+                      {chartData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(val: any) => `R$ ${Number(val).toFixed(2)}`} />
+                  </PieChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="flex flex-col items-center justify-center text-center p-4">
+                  <div className="w-24 h-24 rounded-full border-4 border-dashed border-gray-100 flex items-center justify-center text-gray-300 font-bold text-xs">
+                    Sem dados
+                  </div>
+                  <p className="text-xs text-gray-400 mt-4 leading-relaxed max-w-[180px]">
+                    Nenhuma transação financeira registrada para este intervalo de filtros.
+                  </p>
+                </div>
+              )}
             </div>
             <div className="flex justify-center gap-6 mt-4">
               <div className="flex items-center gap-2">

@@ -516,8 +516,8 @@ const Inventory: React.FC = () => {
                     type="number"
                     step="0.01"
                     className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                    value={newAsset.value}
-                    onChange={(e) => setNewAsset({...newAsset, value: parseFloat(e.target.value)})}
+                    value={isNaN(newAsset.value) ? '' : newAsset.value}
+                    onChange={(e) => setNewAsset({...newAsset, value: parseFloat(e.target.value) || 0})}
                   />
                 </div>
                 <div>
