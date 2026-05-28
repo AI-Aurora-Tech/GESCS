@@ -1694,7 +1694,7 @@ const Lojinha: React.FC = () => {
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="p-6 border-b border-gray-100">
-              <h3 className="text-lg font-bold">Histórico de Entradas e Saídas</h3>
+              <h3 className="text-lg font-bold">Histórico de Entradas e Saídas (Lojinha)</h3>
             </div>
             <table className="w-full text-left">
               <thead className="bg-gray-50">
@@ -1703,12 +1703,13 @@ const Lojinha: React.FC = () => {
                   <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Produto</th>
                   <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Tipo</th>
                   <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Qtd</th>
+                  <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Observação / Detalhe</th>
                   <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Usuário</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {transactions.map((t) => {
-                  const product = products.find(p => p.id === t.productId);
+                  const isEntry = t.type === 'entry' || t.type === 'in';
                   return (
                     <tr key={t.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 text-sm text-gray-500">
@@ -1720,13 +1721,16 @@ const Lojinha: React.FC = () => {
                       <td className="px-6 py-4">
                         <span className={cn(
                           "px-2 py-1 rounded-full text-[10px] font-bold uppercase",
-                          t.type === 'entry' ? "bg-green-100 text-green-600" : "bg-red-100 text-red-600"
+                          isEntry ? "bg-green-100 text-green-600" : "bg-red-100 text-red-600"
                         )}>
-                          {t.type === 'entry' ? 'Entrada' : 'Saída'}
+                          {isEntry ? 'Entrada' : 'Saída'}
                         </span>
                       </td>
                       <td className="px-6 py-4 font-bold">
                         {t.quantity}
+                      </td>
+                      <td className="px-6 py-4 text-xs text-gray-600 font-medium">
+                        {t.notes || t.description || '-'}
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-500">
                         {t.profiles?.display_name || t.userName || 'Sistema'}

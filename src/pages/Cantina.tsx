@@ -1098,6 +1098,85 @@ const Cantina: React.FC = () => {
         </div>
       )}
 
+      {activeTab === 'movimentacao' && (
+        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+            <div className="p-6 border-b border-gray-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Histórico de Caixa e Vendas (Cantina)</h3>
+                <p className="text-xs text-gray-500">Mapeamento de todas as vendas do PDV e movimentações financeiras da cantina.</p>
+              </div>
+              <div className="text-right">
+                <span className="text-xs font-semibold px-2.5 py-1 bg-blue-50 text-blue-700 rounded-full">
+                  {records.filter(r => r.module === 'cantina').length} Registros
+                </span>
+              </div>
+            </div>
+            
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Data</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Descrição / Comanda</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Categoria / Ramo</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Tipo</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Valor</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {records
+                    .filter(r => r.module === 'cantina')
+                    .map((r) => {
+                      const isIncome = r.type === 'income';
+                      return (
+                        <tr key={r.id} className="hover:bg-gray-50 transition-colors">
+                          <td className="px-6 py-4 text-sm text-gray-500">
+                            {r.date ? format(new Date(r.date), 'dd/MM/yyyy HH:mm') : '-'}
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className="font-medium text-gray-900 block text-sm">{r.description}</span>
+                            {r.branch && <span className="text-[10px] text-gray-400 font-bold uppercase">{r.branch}</span>}
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className="text-xs font-semibold px-2 py-1 bg-gray-100 text-gray-600 rounded-lg">
+                              {r.category}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={cn(
+                              "px-2 py-1 rounded-full text-[10px] font-bold uppercase inline-flex items-center gap-1",
+                              isIncome ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+                            )}>
+                              {isIncome ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
+                              {isIncome ? 'Entrada / Venda' : 'Saída / Custo'}
+                            </span>
+                          </td>
+                          <td className={cn(
+                            "px-6 py-4 font-bold text-sm text-right",
+                            isIncome ? "text-green-600" : "text-red-600"
+                          )}>
+                            {isIncome ? '+' : '-'} R$ {Number(r.amount).toFixed(2)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  
+                  {records.filter(r => r.module === 'cantina').length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="px-6 py-12 text-center text-gray-400">
+                        <History size={48} className="mx-auto mb-4 opacity-10" />
+                        Nenhuma movimentação ou venda registrada na cantina ainda.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
       {activeTab === 'configuracoes' && (
         <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-100 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <div className="max-w-2xl">
@@ -1124,36 +1203,66 @@ const Cantina: React.FC = () => {
         </div>
       )}
 
-      {activeTab === 'relatorios' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-            <h3 className="font-bold mb-4">Relatórios Internos</h3>
-            <div className="space-y-3">
-              <button className="w-full flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100">
-                <span className="text-sm">Lucratividade por Categoria</span>
-                <Download size={16} className="text-gray-400" />
-              </button>
-              <button className="w-full flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100">
-                <span className="text-sm">Consumo Médio por Evento</span>
-                <Download size={16} className="text-gray-400" />
-              </button>
+      {activeTab === 'relatorios' && (() => {
+        const cantinaRecords = records.filter(r => r.module === 'cantina');
+        const totalIncome = cantinaRecords.filter(r => r.type === 'income').reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+        const totalExpense = cantinaRecords.filter(r => r.type === 'expense').reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+        const netProfit = totalIncome - totalExpense;
+
+        return (
+          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+            {/* Dynamic Financial Status Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Faturamento de Vendas</p>
+                <p className="text-2xl font-black text-green-600 mt-2">R$ {totalIncome.toFixed(2)}</p>
+                <p className="text-xs text-gray-500 mt-1">Total acumulado de entradas</p>
+              </div>
+              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Custos & Retiradas</p>
+                <p className="text-2xl font-black text-red-600 mt-2">R$ {totalExpense.toFixed(2)}</p>
+                <p className="text-xs text-gray-500 mt-1">Total extraído de despesas</p>
+              </div>
+              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Resultado Líquido</p>
+                <p className={cn("text-2xl font-black mt-2", netProfit >= 0 ? "text-blue-600" : "text-red-555")}>
+                  R$ {netProfit.toFixed(2)}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">Acervo final líquido</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                <h3 className="font-bold mb-4">Relatórios Internos</h3>
+                <div className="space-y-3">
+                  <button className="w-full flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 text-left">
+                    <span className="text-sm">Lucratividade por Categoria</span>
+                    <Download size={16} className="text-gray-400" />
+                  </button>
+                  <button className="w-full flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 text-left">
+                    <span className="text-sm">Consumo Médio por Evento</span>
+                    <Download size={16} className="text-gray-400" />
+                  </button>
+                </div>
+              </div>
+              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                <h3 className="font-bold mb-4">Relatórios para Contadora</h3>
+                <div className="space-y-3">
+                  <button className="w-full flex items-center justify-between p-3 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 text-left">
+                    <span className="text-sm font-medium">DRE Simplificado (PDF)</span>
+                    <FileText size={16} />
+                  </button>
+                  <button className="w-full flex items-center justify-between p-3 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 text-left">
+                    <span className="text-sm font-medium">Livro Caixa (Excel)</span>
+                    <FileText size={16} />
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-            <h3 className="font-bold mb-4">Relatórios para Contadora</h3>
-            <div className="space-y-3">
-              <button className="w-full flex items-center justify-between p-3 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100">
-                <span className="text-sm">DRE Simplificado (PDF)</span>
-                <FileText size={16} />
-              </button>
-              <button className="w-full flex items-center justify-between p-3 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100">
-                <span className="text-sm">Livro Caixa (Excel)</span>
-                <FileText size={16} />
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Production Modal */}
       {isProductionModalOpen && selectedRecipe && (
