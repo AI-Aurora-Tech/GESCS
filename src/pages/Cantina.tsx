@@ -29,6 +29,9 @@ interface FinancialRecord {
   description: string;
   date: string;
   is_extraordinary: boolean;
+  module?: 'lojinha' | 'cantina' | 'geral';
+  branch?: string;
+  receipt_base64?: string | null;
 }
 
 const Cantina: React.FC = () => {
@@ -235,8 +238,11 @@ const Cantina: React.FC = () => {
 
   const [viewingAttachment, setViewingAttachment] = useState<string | null>(null);
 
-  const extractAttachment = (desc: string) => {
-    if (!desc) return { cleanDescription: '', attachment: null };
+  const extractAttachment = (record: FinancialRecord) => {
+    if (record.receipt_base64) {
+      return { cleanDescription: record.description, attachment: record.receipt_base64 };
+    }
+    const desc = record.description || '';
     const match = desc.match(/\[ANEXO_NF:(.*?)\]/);
     if (match) {
       const cleanDescription = desc.replace(/\s*\[ANEXO_NF:.*?\]/, '');
@@ -416,14 +422,11 @@ const Cantina: React.FC = () => {
   const handleAddRecord = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      let finalDescription = newRecord.description;
-      if (attachedFile) {
-        finalDescription += ` [ANEXO_NF:${attachedFile}]`;
-      }
-
       const { error } = await supabase.from('financial_records').insert([{
         ...newRecord,
-        description: finalDescription
+        module: 'cantina',
+        branch: 'Grupo',
+        receipt_base64: attachedFile || null
       }]);
       if (error) throw error;
       
@@ -767,7 +770,7 @@ const Cantina: React.FC = () => {
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {records.map((record) => {
-                    const parsed = extractAttachment(record.description);
+                    const parsed = extractAttachment(record);
                     return (
                       <tr key={record.id} className="hover:bg-gray-50 transition-colors">
                         <td className="px-6 py-4 text-sm text-gray-500">

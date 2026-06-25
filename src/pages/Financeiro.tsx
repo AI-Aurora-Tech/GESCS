@@ -39,6 +39,7 @@ interface FinancialRecord {
   date: string;
   module: 'lojinha' | 'cantina' | 'geral';
   branch?: 'Lobinho' | 'Escoteiro' | 'Senior' | 'Pioneiro' | 'Grupo';
+  receipt_base64?: string | null;
 }
 
 const Financeiro: React.FC = () => {
@@ -56,8 +57,11 @@ const Financeiro: React.FC = () => {
   
   const [viewingAttachment, setViewingAttachment] = useState<string | null>(null);
 
-  const extractAttachment = (desc: string) => {
-    if (!desc) return { cleanDescription: '', attachment: null };
+  const extractAttachment = (record: FinancialRecord) => {
+    if (record.receipt_base64) {
+      return { cleanDescription: record.description, attachment: record.receipt_base64 };
+    }
+    const desc = record.description || '';
     const match = desc.match(/\[ANEXO_NF:(.*?)\]/);
     if (match) {
       const cleanDescription = desc.replace(/\s*\[ANEXO_NF:.*?\]/, '');
@@ -442,7 +446,7 @@ const Financeiro: React.FC = () => {
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {filteredRecords.map((record) => {
-                    const parsed = extractAttachment(record.description);
+                    const parsed = extractAttachment(record);
                     return (
                       <tr key={record.id} className="hover:bg-gray-50 transition-colors">
                         <td className="px-6 py-4 whitespace-nowrap">
