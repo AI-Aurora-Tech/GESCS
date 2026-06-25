@@ -226,6 +226,7 @@ const Cantina: React.FC = () => {
     description: '',
     is_extraordinary: false
   });
+  const [recordAmountStr, setRecordAmountStr] = useState('');
   const [attachedFile, setAttachedFile] = useState<string | null>(null);
   const [attachedFileName, setAttachedFileName] = useState<string>('');
 
@@ -235,6 +236,8 @@ const Cantina: React.FC = () => {
     price: 0,
     stock: 0
   });
+  const [newMaterialPriceStr, setNewMaterialPriceStr] = useState('');
+  const [newMaterialStockStr, setNewMaterialStockStr] = useState('');
 
   const [viewingAttachment, setViewingAttachment] = useState<string | null>(null);
 
@@ -293,11 +296,9 @@ const Cantina: React.FC = () => {
     }
   };
 
-  const [marginCalc, setMarginCalc] = useState({
-    cost: 0,
-    markup: 30, // %
-    others: 0
-  });
+  const [marginCalcCostStr, setMarginCalcCostStr] = useState('0');
+  const [marginCalcMarkupStr, setMarginCalcMarkupStr] = useState('30');
+  const [marginCalcOthersStr, setMarginCalcOthersStr] = useState('0');
 
   const [foodBank, setFoodBank] = useState<any[]>([]);
   const [isFoodBankModalOpen, setIsFoodBankModalOpen] = useState(false);
@@ -422,8 +423,10 @@ const Cantina: React.FC = () => {
   const handleAddRecord = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const parsedAmount = parseFloat(recordAmountStr.replace(/\./g, '').replace(',', '.')) || 0;
       const { error } = await supabase.from('financial_records').insert([{
         ...newRecord,
+        amount: parsedAmount,
         module: 'cantina',
         branch: 'Grupo',
         receipt_base64: attachedFile || null
@@ -432,6 +435,7 @@ const Cantina: React.FC = () => {
       
       setIsModalOpen(false);
       setNewRecord({ type: 'income', amount: 0, category: 'Venda Direta', description: '', is_extraordinary: false });
+      setRecordAmountStr('');
       setAttachedFile(null);
       setAttachedFileName('');
       fetchRecords();
@@ -444,11 +448,21 @@ const Cantina: React.FC = () => {
   const handleAddMaterial = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const { error } = await supabase.from('cantina_materials').insert([newMaterial]);
+      const parsedPrice = parseFloat(newMaterialPriceStr.replace(/\./g, '').replace(',', '.')) || 0;
+      const parsedStock = parseFloat(newMaterialStockStr.replace(/\./g, '').replace(',', '.')) || 0;
+      const payload = {
+        name: newMaterial.name,
+        category: newMaterial.category,
+        price: parsedPrice,
+        stock: parsedStock
+      };
+      const { error } = await supabase.from('cantina_materials').insert([payload]);
       if (error) throw error;
       
       setIsMaterialModalOpen(false);
       setNewMaterial({ name: '', category: 'Salgados', price: 0, stock: 0 });
+      setNewMaterialPriceStr('');
+      setNewMaterialStockStr('');
       fetchMaterials();
     } catch (err: any) {
       console.error(err);
@@ -1070,55 +1084,69 @@ const Cantina: React.FC = () => {
         </div>
       )}
 
-      {activeTab === 'margem' && (
-        <div className="max-w-md mx-auto bg-white p-8 rounded-2xl shadow-sm border border-gray-100 animate-in fade-in slide-in-from-bottom-2 duration-300">
-          <h2 className="text-xl font-bold mb-6">Calculadora de Margem</h2>
-          <div className="space-y-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Custo do Produto (R$)</label>
-              <input 
-                type="number" 
-                className="w-full px-4 py-2 border border-gray-200 rounded-lg" 
-                value={marginCalc.cost} 
-                onChange={e => setMarginCalc({...marginCalc, cost: parseFloat(e.target.value) || 0})}
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Custos Fixos/Outros (R$)</label>
-              <input 
-                type="number" 
-                className="w-full px-4 py-2 border border-gray-200 rounded-lg" 
-                value={marginCalc.others} 
-                onChange={e => setMarginCalc({...marginCalc, others: parseFloat(e.target.value) || 0})}
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Margem Desejada (%)</label>
-              <input 
-                type="number" 
-                className="w-full px-4 py-2 border border-gray-200 rounded-lg" 
-                value={marginCalc.markup} 
-                onChange={e => setMarginCalc({...marginCalc, markup: parseFloat(e.target.value) || 0})}
-              />
-            </div>
-
-            <div className="p-6 bg-blue-50 rounded-2xl border border-blue-100 font-sans">
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-sm text-blue-900">Preço de Venda Sugerido:</span>
-                <span className="text-2xl font-bold text-blue-600">
-                  R$ {((marginCalc.cost + marginCalc.others) * (1 + marginCalc.markup / 100)).toFixed(2)}
-                </span>
+      {activeTab === 'margem' && (() => {
+        const marginCost = parseFloat(marginCalcCostStr.replace(/\./g, '').replace(',', '.')) || 0;
+        const marginOthers = parseFloat(marginCalcOthersStr.replace(/\./g, '').replace(',', '.')) || 0;
+        const marginMarkup = parseFloat(marginCalcMarkupStr.replace(/\./g, '').replace(',', '.')) || 0;
+        return (
+          <div className="max-w-md mx-auto bg-white p-8 rounded-2xl shadow-sm border border-gray-100 animate-in fade-in slide-in-from-bottom-2 duration-300">
+            <h2 className="text-xl font-bold mb-6">Calculadora de Margem</h2>
+            <div className="space-y-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Custo do Produto (R$)</label>
+                <input 
+                  type="text" 
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg" 
+                  value={marginCalcCostStr} 
+                  onChange={e => {
+                    let val = e.target.value.replace(/[^0-9,\.]/g, '');
+                    setMarginCalcCostStr(val);
+                  }}
+                />
               </div>
-              <div className="flex justify-between items-center text-xs text-blue-700">
-                <span>Lucro Bruto por Unidade:</span>
-                <span className="font-bold">
-                  R$ {((marginCalc.cost + marginCalc.others) * (marginCalc.markup / 100)).toFixed(2)}
-                </span>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Custos Fixos/Outros (R$)</label>
+                <input 
+                  type="text" 
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg" 
+                  value={marginCalcOthersStr} 
+                  onChange={e => {
+                    let val = e.target.value.replace(/[^0-9,\.]/g, '');
+                    setMarginCalcOthersStr(val);
+                  }}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Margem Desejada (%)</label>
+                <input 
+                  type="text" 
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg" 
+                  value={marginCalcMarkupStr} 
+                  onChange={e => {
+                    let val = e.target.value.replace(/[^0-9,\.]/g, '');
+                    setMarginCalcMarkupStr(val);
+                  }}
+                />
+              </div>
+
+              <div className="p-6 bg-blue-50 rounded-2xl border border-blue-100 font-sans">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-sm text-blue-900">Preço de Venda Sugerido:</span>
+                  <span className="text-2xl font-bold text-blue-600">
+                    R$ {((marginCost + marginOthers) * (1 + marginMarkup / 100)).toFixed(2)}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-xs text-blue-700">
+                  <span>Lucro Bruto por Unidade:</span>
+                  <span className="font-bold">
+                    R$ {((marginCost + marginOthers) * (marginMarkup / 100)).toFixed(2)}
+                  </span>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {activeTab === 'receitas' && (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
@@ -2006,11 +2034,13 @@ const Cantina: React.FC = () => {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Valor (R$)</label>
                   <input 
                     required
-                    type="number"
-                    step="0.01"
+                    type="text"
                     className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                    value={isNaN(newRecord.amount) ? '' : newRecord.amount}
-                    onChange={(e) => setNewRecord({...newRecord, amount: parseFloat(e.target.value) || 0})}
+                    value={recordAmountStr}
+                    onChange={e => {
+                      let val = e.target.value.replace(/[^0-9,\.]/g, '');
+                      setRecordAmountStr(val);
+                    }}
                   />
                 </div>
                 <div>
@@ -2203,11 +2233,13 @@ const Cantina: React.FC = () => {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Preço (R$)</label>
                   <input 
                     required
-                    type="number"
-                    step="0.01"
+                    type="text"
                     className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                    value={isNaN(newMaterial.price) ? '' : newMaterial.price}
-                    onChange={(e) => setNewMaterial({...newMaterial, price: parseFloat(e.target.value) || 0})}
+                    value={newMaterialPriceStr}
+                    onChange={e => {
+                      let val = e.target.value.replace(/[^0-9,\.]/g, '');
+                      setNewMaterialPriceStr(val);
+                    }}
                   />
                 </div>
               </div>
@@ -2215,10 +2247,13 @@ const Cantina: React.FC = () => {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Estoque Inicial</label>
                 <input 
                   required
-                  type="number"
+                  type="text"
                   className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                  value={isNaN(newMaterial.stock) ? '' : newMaterial.stock}
-                  onChange={(e) => setNewMaterial({...newMaterial, stock: parseInt(e.target.value) || 0})}
+                  value={newMaterialStockStr}
+                  onChange={e => {
+                    let val = e.target.value.replace(/[^0-9,\.]/g, '');
+                    setNewMaterialStockStr(val);
+                  }}
                 />
               </div>
               <div className="flex gap-3 pt-4">
