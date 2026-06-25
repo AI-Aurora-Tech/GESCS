@@ -28,9 +28,9 @@ interface Asset {
   barcode?: string;
   description: string;
   value: number;
-  status: 'active' | 'disposed' | 'pending_approval';
+  status: 'active' | 'disposed' | 'pending_approval' | 'Novo' | 'Usado' | 'Muito Usado' | 'Descartar';
   justification?: string;
-  branch: 'Lobinho' | 'Escoteiro' | 'Senior' | 'Pioneiro' | 'Grupo';
+  branch: 'Filhote' | 'Lobinho' | 'Escoteiro' | 'Senior' | 'Pioneiro' | 'Grupo Geral' | 'Grupo';
   date_acquired: string;
   date_disposed?: string;
 }
@@ -45,14 +45,17 @@ const Inventory: React.FC = () => {
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
   const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(new Set());
   const [disposalJustification, setDisposalJustification] = useState('');
+  const [assetValueStr, setAssetValueStr] = useState('');
+  const [codeType, setCodeType] = useState<'barcode' | 'qrcode'>('qrcode');
 
   const [newAsset, setNewAsset] = useState({
     name: '',
     barcode: '',
     description: '',
     value: 0,
-    branch: 'Grupo' as Asset['branch'],
-    status: 'pending_approval' as 'pending_approval'
+    branch: 'Grupo Geral' as Asset['branch'],
+    type: 'Equipamento',
+    status: 'Novo' as Asset['status']
   });
 
   const generateBarcode = () => {
@@ -88,14 +91,36 @@ const Inventory: React.FC = () => {
     e.preventDefault();
     try {
       const barcode = newAsset.barcode || generateBarcode();
-      const { error } = await supabase.from('assets').insert([{ ...newAsset, barcode }]);
+      const formattedDescription = `[Tipo: ${newAsset.type}] ${newAsset.description}`;
+      const assetValue = parseFloat(assetValueStr.replace(/\./g, '').replace(',', '.')) || 0;
+      const payload = {
+        name: newAsset.name,
+        barcode,
+        description: formattedDescription,
+        value: assetValue,
+        branch: newAsset.branch,
+        status: newAsset.status,
+        date_acquired: new Date().toISOString().slice(0, 10)
+      };
+
+      const { error } = await supabase.from('assets').insert([payload]);
       if (error) throw error;
       
       setIsModalOpen(false);
-      setNewAsset({ name: '', barcode: '', description: '', value: 0, branch: 'Grupo', status: 'pending_approval' });
+      setAssetValueStr('');
+      setNewAsset({ 
+        name: '', 
+        barcode: '', 
+        description: '', 
+        value: 0, 
+        branch: 'Grupo Geral', 
+        type: 'Equipamento', 
+        status: 'Novo' 
+      });
       fetchAssets();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      alert(`Erro ao cadastrar ativo: ${err?.message || 'Verifique se as permissões do banco estão de acordo.'}`);
     }
   };
 
@@ -151,11 +176,11 @@ const Inventory: React.FC = () => {
   };
 
   const toggleAllAssets = () => {
-    const activeAssets = assets.filter(a => a.status === 'active');
-    if (selectedAssetIds.size === activeAssets.length) {
+    const labelableAssets = assets.filter(a => a.status === 'active' || ['Novo', 'Usado', 'Muito Usado', 'Descartar'].includes(a.status));
+    if (selectedAssetIds.size === labelableAssets.length) {
       setSelectedAssetIds(new Set());
     } else {
-      setSelectedAssetIds(new Set(activeAssets.map(a => a.id)));
+      setSelectedAssetIds(new Set(labelableAssets.map(a => a.id)));
     }
   };
 
@@ -174,7 +199,7 @@ const Inventory: React.FC = () => {
     : allTabs;
 
   return (
-    <div className="space-y-8 print:hidden">
+    <>
       <div className="hidden print:block p-4">
         <div className="grid grid-cols-4 gap-4">
           {assets.filter(a => selectedAssetIds.has(a.id)).map((asset) => (
@@ -183,14 +208,23 @@ const Inventory: React.FC = () => {
               <span className="text-[10px] font-black uppercase text-gray-500 tracking-widest mb-1">{asset.branch}</span>
               <span className="font-bold text-xs mb-2 leading-tight h-8 flex items-center">{asset.name}</span>
               {asset.barcode && (
-                <div className="mt-auto">
-                  <Barcode 
-                    value={asset.barcode} 
-                    height={30} 
-                    width={1.2} 
-                    fontSize={8} 
-                    margin={0}
-                  />
+                <div className="mt-auto flex flex-col items-center">
+                  {codeType === 'qrcode' ? (
+                    <img 
+                      src={`https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${encodeURIComponent(asset.barcode)}`}
+                      alt="QR Code"
+                      className="w-20 h-20 bg-white p-1 border border-gray-200 rounded-lg"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <Barcode 
+                      value={asset.barcode} 
+                      height={30} 
+                      width={1.2} 
+                      fontSize={8} 
+                      margin={0}
+                    />
+                  )}
                 </div>
               )}
             </div>
@@ -198,12 +232,20 @@ const Inventory: React.FC = () => {
         </div>
       </div>
 
-      <header className="flex justify-between items-center print:hidden">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">4. Sistema de Inventário</h1>
-          <p className="text-gray-500">Controle patrimonial e gestão de ativos do grupo.</p>
-        </div>
-      </header>
+      <div className="space-y-8 print:hidden">
+        <header className="flex justify-between items-center">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">4. Sistema de Inventário</h1>
+            <p className="text-gray-500">Controle patrimonial e gestão de ativos do grupo.</p>
+          </div>
+          <button 
+            type="button"
+            onClick={() => setIsModalOpen(true)}
+            className="flex items-center px-4 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors shadow-sm"
+          >
+            <Plus size={16} className="mr-2" /> Cadastrar Ativo
+          </button>
+        </header>
 
       {/* Sub-Tabs Navigation */}
       <div className="flex border-b border-gray-200 overflow-x-auto whitespace-nowrap no-scrollbar">
@@ -258,16 +300,35 @@ const Inventory: React.FC = () => {
                       />
                       <span className={cn(
                         "px-2 py-1 rounded-full text-[10px] font-bold uppercase",
-                        asset.status === 'active' ? "bg-green-100 text-green-600" :
-                        asset.status === 'pending_approval' ? "bg-orange-100 text-orange-600" : "bg-gray-100 text-gray-600"
+                        asset.status === 'active' || ['Novo', 'Usado', 'Muito Usado'].includes(asset.status) ? "bg-green-100 text-green-600" :
+                        asset.status === 'pending_approval' ? "bg-orange-100 text-orange-600" : "bg-red-100 text-red-650"
                       )}>
-                        {asset.status === 'active' ? 'Ativo' : asset.status === 'pending_approval' ? 'Pendente' : 'Baixado'}
+                        {asset.status === 'active' ? 'Ativo' : 
+                         asset.status === 'pending_approval' ? 'Pendente' : 
+                         ['Novo', 'Usado', 'Muito Usado', 'Descartar'].includes(asset.status) ? asset.status : 'Baixado'}
                       </span>
                     </div>
                     <p className="text-sm font-bold text-gray-900">R$ {asset.value.toFixed(2)}</p>
                   </div>
-                  <h3 className="text-lg font-bold text-gray-900 mb-1">{asset.name}</h3>
-                  <p className="text-sm text-gray-500 mb-4 line-clamp-2">{asset.description}</p>
+                  {(() => {
+                    const typeMatch = asset.description.match(/^\[Tipo:\s*([^\]]+)\]/);
+                    const displayType = typeMatch ? typeMatch[1] : 'Equipamento';
+                    const displayDescription = asset.description.replace(/^\[Tipo:\s*([^\]]+)\]\s*/, '');
+                    return (
+                      <>
+                        <div className="flex gap-1.5 flex-wrap mb-2">
+                          <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-600 text-[10px] font-bold uppercase">
+                            {displayType}
+                          </span>
+                          <span className="px-2 py-0.5 rounded bg-purple-50 text-purple-600 text-[10px] font-bold uppercase">
+                            Ramo: {asset.branch}
+                          </span>
+                        </div>
+                        <h3 className="text-lg font-bold text-gray-900 mb-1">{asset.name}</h3>
+                        <p className="text-sm text-gray-500 mb-4 line-clamp-2">{displayDescription}</p>
+                      </>
+                    );
+                  })()}
                   
                   <div className="flex items-center text-xs text-gray-400">
                     <Clock size={14} className="mr-1" />
@@ -364,11 +425,11 @@ const Inventory: React.FC = () => {
                     id="select-all-assets"
                     type="checkbox"
                     className="rounded text-blue-600 focus:ring-blue-500"
-                    checked={selectedAssetIds.size === assets.filter(a => a.status === 'active').length && assets.length > 0}
+                    checked={selectedAssetIds.size === assets.filter(a => a.status === 'active' || ['Novo', 'Usado', 'Muito Usado', 'Descartar'].includes(a.status)).length && assets.length > 0}
                     onChange={toggleAllAssets}
                   />
                   <label htmlFor="select-all-assets" className="text-sm font-medium text-gray-700 cursor-pointer">
-                    Selecionar Todos ({assets.filter(a => a.status === 'active').length})
+                    Selecionar Todos ({assets.filter(a => a.status === 'active' || ['Novo', 'Usado', 'Muito Usado', 'Descartar'].includes(a.status)).length})
                   </label>
                 </div>
                 <span className="text-xs text-gray-400">
@@ -376,22 +437,48 @@ const Inventory: React.FC = () => {
                 </span>
               </div>
             </div>
-            <button 
-              onClick={() => {
-                if (selectedAssetIds.size === 0) {
-                  alert("Selecione ao menos um ativo para imprimir.");
-                  return;
-                }
-                window.print();
-              }}
-              className="w-full md:w-auto px-6 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-200"
-            >
-              Imprimir Etiquetas ({selectedAssetIds.size})
-            </button>
+
+            <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto items-stretch sm:items-center">
+              <div className="flex bg-gray-100 p-1 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => setCodeType('qrcode')}
+                  className={cn(
+                    "px-4 py-2 text-xs font-bold rounded-lg transition-all",
+                    codeType === 'qrcode' ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                  )}
+                >
+                  QR Code
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCodeType('barcode')}
+                  className={cn(
+                    "px-4 py-2 text-xs font-bold rounded-lg transition-all",
+                    codeType === 'barcode' ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                  )}
+                >
+                  Cód. Barras
+                </button>
+              </div>
+
+              <button 
+                onClick={() => {
+                  if (selectedAssetIds.size === 0) {
+                    alert("Selecione ao menos um ativo para imprimir.");
+                    return;
+                  }
+                  window.print();
+                }}
+                className="px-6 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-200 text-sm"
+              >
+                Imprimir Etiquetas ({selectedAssetIds.size})
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-            {assets.filter(a => a.status === 'active').map((asset) => (
+            {assets.filter(a => a.status === 'active' || ['Novo', 'Usado', 'Muito Usado', 'Descartar'].includes(a.status)).map((asset) => (
               <div 
                 key={asset.id} 
                 onClick={() => toggleAssetSelection(asset.id)}
@@ -409,17 +496,26 @@ const Inventory: React.FC = () => {
                   />
                 </div>
                 <Logo size={48} branch={asset.branch} className="mb-2" />
-                <span className="text-[10px] font-black uppercase text-gray-400 tracking-widest mb-1">{asset.branch}</span>
+                <span className="text-[10px] font-black uppercase text-gray-500 tracking-widest mb-1">{asset.branch}</span>
                 <span className="font-bold text-xs mb-2 leading-tight h-8 flex items-center">{asset.name}</span>
                 {asset.barcode && (
-                  <div className="mt-auto">
-                    <Barcode 
-                      value={asset.barcode} 
-                      height={30} 
-                      width={1.2} 
-                      fontSize={8} 
-                      margin={0}
-                    />
+                  <div className="mt-auto flex flex-col items-center">
+                    {codeType === 'qrcode' ? (
+                      <img 
+                        src={`https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${encodeURIComponent(asset.barcode)}`}
+                        alt="QR Code"
+                        className="w-20 h-20 bg-white p-1 border border-gray-100 rounded-lg shadow-sm"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <Barcode 
+                        value={asset.barcode} 
+                        height={30} 
+                        width={1.2} 
+                        fontSize={8} 
+                        margin={0}
+                      />
+                    )}
                   </div>
                 )}
               </div>
@@ -481,11 +577,10 @@ const Inventory: React.FC = () => {
         </div>
       )}
 
-      {/* New Demand Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8">
-            <h2 className="text-xl font-bold mb-6">Nova Demanda de Ativo</h2>
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8 animate-in fade-in duration-200">
+            <h2 className="text-xl font-bold mb-6">Cadastrar Novo Ativo</h2>
             <form onSubmit={handleAddAsset} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Nome do Ativo</label>
@@ -493,72 +588,112 @@ const Inventory: React.FC = () => {
                   required
                   type="text"
                   placeholder="Ex: Barraca 4 pessoas, Projetor..."
-                  className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
                   value={newAsset.name}
                   onChange={(e) => setNewAsset({...newAsset, name: e.target.value})}
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Descrição / Especificação</label>
-                <textarea 
-                  required
-                  rows={3}
-                  className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                  value={newAsset.description}
-                  onChange={(e) => setNewAsset({...newAsset, description: e.target.value})}
-                />
-              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Valor Estimado (R$)</label>
-                  <input 
-                    required
-                    type="number"
-                    step="0.01"
-                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
-                    value={isNaN(newAsset.value) ? '' : newAsset.value}
-                    onChange={(e) => setNewAsset({...newAsset, value: parseFloat(e.target.value) || 0})}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Ramo</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Ramo Atrelado</label>
                   <select 
                     required
-                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                     value={newAsset.branch}
                     onChange={(e) => setNewAsset({...newAsset, branch: e.target.value as any})}
                   >
-                    <option value="Grupo">Grupo</option>
+                    <option value="Filhote">Filhote</option>
                     <option value="Lobinho">Lobinho</option>
                     <option value="Escoteiro">Escoteiro</option>
                     <option value="Senior">Senior</option>
                     <option value="Pioneiro">Pioneiro</option>
+                    <option value="Grupo Geral">Grupo Geral</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Ativo</label>
+                  <select 
+                    required
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    value={newAsset.type}
+                    onChange={(e) => setNewAsset({...newAsset, type: e.target.value})}
+                  >
+                    <option value="Equipamento">Equipamento</option>
+                    <option value="Consumível">Consumível</option>
+                    <option value="Mobiliário">Mobiliário</option>
+                    <option value="Outro">Outro</option>
                   </select>
                 </div>
               </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Status do Ativo</label>
+                  <select 
+                    required
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    value={newAsset.status}
+                    onChange={(e) => setNewAsset({...newAsset, status: e.target.value as any})}
+                  >
+                    <option value="Novo">Novo</option>
+                    <option value="Usado">Usado</option>
+                    <option value="Muito Usado">Muito Usado</option>
+                    <option value="Descartar">Descartar</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Valor Estimado (R$)</label>
+                  <input 
+                    type="text"
+                    placeholder="0,00"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    value={assetValueStr}
+                    onChange={(e) => {
+                      let val = e.target.value;
+                      val = val.replace(/[^0-9,\.]/g, '');
+                      setAssetValueStr(val);
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Descrição / Especificação</label>
+                <textarea 
+                  required
+                  rows={2}
+                  placeholder="Especificações, marca, modelo, etc..."
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
+                  value={newAsset.description}
+                  onChange={(e) => setNewAsset({...newAsset, description: e.target.value})}
+                />
+              </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Cód. Barras (Opcional)</label>
                 <input 
                   type="text"
-                  placeholder="Gerado se vazio"
-                  className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                  placeholder="Gerado automaticamente se vazio"
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
                   value={newAsset.barcode}
                   onChange={(e) => setNewAsset({...newAsset, barcode: e.target.value})}
                 />
               </div>
+
               <div className="flex gap-3 pt-4">
                 <button 
                   type="button"
                   onClick={() => setIsModalOpen(false)}
-                  className="flex-1 py-2 border border-gray-200 rounded-lg text-sm font-medium"
+                  className="flex-1 py-2 border border-gray-200 rounded-lg text-sm font-medium hover:bg-gray-50"
                 >
                   Cancelar
                 </button>
                 <button 
                   type="submit"
-                  className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium"
+                  className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 shadow-sm"
                 >
-                  Enviar para Aprovação
+                  Cadastrar Ativo
                 </button>
               </div>
             </form>
@@ -607,6 +742,7 @@ const Inventory: React.FC = () => {
         </div>
       )}
     </div>
+  </>
   );
 };
 

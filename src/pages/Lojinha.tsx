@@ -59,6 +59,8 @@ const Lojinha: React.FC = () => {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
   const [isDemandModalOpen, setIsDemandModalOpen] = useState(false);
+  const [selectedDemand, setSelectedDemand] = useState<any | null>(null);
+  const [isDemandDetailsModalOpen, setIsDemandDetailsModalOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [selectedProductIds, setSelectedProductIds] = useState<Set<string>>(new Set());
   const [stockAction, setStockAction] = useState<'entry' | 'exit'>('entry');
@@ -607,6 +609,37 @@ const Lojinha: React.FC = () => {
       fetchData();
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const handleUpdateDemandStatus = async (demandId: string, newStatus: string) => {
+    try {
+      const { error } = await supabase
+        .from('lojinha_demands')
+        .update({ status: newStatus })
+        .eq('id', demandId);
+      if (error) throw error;
+      fetchData();
+      setIsDemandDetailsModalOpen(false);
+    } catch (err: any) {
+      console.error(err);
+      alert(`Erro ao atualizar demanda: ${err?.message || 'Erro inesperado'}`);
+    }
+  };
+
+  const handleDeleteDemand = async (demandId: string) => {
+    if (!window.confirm("Deseja realmente excluir esta demanda?")) return;
+    try {
+      const { error } = await supabase
+        .from('lojinha_demands')
+        .delete()
+        .eq('id', demandId);
+      if (error) throw error;
+      fetchData();
+      setIsDemandDetailsModalOpen(false);
+    } catch (err: any) {
+      console.error(err);
+      alert(`Erro ao excluir demanda: ${err?.message || 'Erro inesperado'}`);
     }
   };
 
@@ -2021,7 +2054,15 @@ const Lojinha: React.FC = () => {
                   <p className="text-sm text-gray-500 mb-4 line-clamp-2">{demand.description}</p>
                   <div className="flex items-center justify-between pt-4 border-t border-gray-50">
                     <span className="text-xs font-medium text-gray-400">Status: {displayStatus}</span>
-                    <button className="text-blue-600 text-xs font-bold hover:underline">Ver Detalhes</button>
+                    <button 
+                      onClick={() => {
+                        setSelectedDemand(demand);
+                        setIsDemandDetailsModalOpen(true);
+                      }}
+                      className="text-blue-600 text-xs font-bold hover:underline"
+                    >
+                      Ver Detalhes
+                    </button>
                   </div>
                 </div>
               );
@@ -2444,6 +2485,82 @@ const Lojinha: React.FC = () => {
                 <BarcodeIcon className="h-4 w-4 mr-2" />
                 Imprimir agora
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isDemandDetailsModalOpen && selectedDemand && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-8 animate-in fade-in duration-200">
+            <div className="flex justify-between items-start mb-6">
+              <div>
+                <span className={cn(
+                  "px-2 py-1 rounded-full text-[10px] font-bold uppercase mr-2",
+                  selectedDemand.priority === 'high' || selectedDemand.priority === 'Alta' ? "bg-red-100 text-red-650" : 
+                  selectedDemand.priority === 'low' || selectedDemand.priority === 'Baixa' ? "bg-blue-100 text-blue-600" : "bg-yellow-100 text-yellow-600"
+                )}>
+                  Prioridade: {selectedDemand.priority === 'high' || selectedDemand.priority === 'Alta' ? 'Alta' : selectedDemand.priority === 'low' || selectedDemand.priority === 'Baixa' ? 'Baixa' : 'Média'}
+                </span>
+                <span className="text-xs text-gray-400">
+                  {selectedDemand.created_at ? format(new Date(selectedDemand.created_at), 'dd/MM/yyyy HH:mm') : ''}
+                </span>
+              </div>
+              <button 
+                onClick={() => setIsDemandDetailsModalOpen(false)}
+                className="text-gray-400 hover:text-gray-600 text-lg font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <h3 className="text-xl font-bold text-gray-900 mb-2">{selectedDemand.title}</h3>
+            <div className="p-4 bg-gray-50 rounded-xl border border-gray-100 mb-6 max-h-[200px] overflow-y-auto">
+              <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{selectedDemand.description}</p>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Alterar Status</label>
+                <div className="flex gap-2">
+                  {['pending', 'in_progress', 'completed'].map((statusValue) => {
+                    const label = statusValue === 'pending' ? 'Pendente' : statusValue === 'in_progress' ? 'Em Progresso' : 'Concluído';
+                    const isSelected = selectedDemand.status === statusValue;
+                    return (
+                      <button
+                        key={statusValue}
+                        type="button"
+                        onClick={() => handleUpdateDemandStatus(selectedDemand.id, statusValue)}
+                        className={cn(
+                          "flex-1 py-2 text-xs font-bold rounded-lg transition-all border",
+                          isSelected 
+                            ? "bg-blue-600 text-white border-blue-600 shadow-sm"
+                            : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
+                        )}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center pt-6 border-t border-gray-100 gap-3">
+                <button
+                  type="button"
+                  onClick={() => handleDeleteDemand(selectedDemand.id)}
+                  className="px-4 py-2 bg-red-50 text-red-650 hover:bg-red-105 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5"
+                >
+                  <Trash2 size={14} /> Excluir Demanda
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsDemandDetailsModalOpen(false)}
+                  className="px-6 py-2 bg-slate-900 text-white hover:bg-slate-800 rounded-lg text-xs font-bold transition-all shadow-sm"
+                >
+                  Fechar
+                </button>
+              </div>
             </div>
           </div>
         </div>

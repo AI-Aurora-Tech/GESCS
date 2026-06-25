@@ -207,11 +207,15 @@ const Cantina: React.FC = () => {
     unit: 'un',
     unit_cost: 0
   });
+  const [newIngredientStockStr, setNewIngredientStockStr] = useState('');
+  const [newIngredientCostStr, setNewIngredientCostStr] = useState('');
 
   const [newRecipe, setNewRecipe] = useState({
     name: '',
     ingredients: [] as { ingredient_id: string, quantity: number }[]
   });
+  const [recipeIngredientId, setRecipeIngredientId] = useState('');
+  const [recipeIngredientQty, setRecipeIngredientQty] = useState('');
   const [newRecord, setNewRecord] = useState({
     type: 'income' as 'income' | 'expense',
     amount: 0,
@@ -219,6 +223,8 @@ const Cantina: React.FC = () => {
     description: '',
     is_extraordinary: false
   });
+  const [attachedFile, setAttachedFile] = useState<string | null>(null);
+  const [attachedFileName, setAttachedFileName] = useState<string>('');
 
   const [newMaterial, setNewMaterial] = useState({
     name: '',
@@ -226,6 +232,18 @@ const Cantina: React.FC = () => {
     price: 0,
     stock: 0
   });
+
+  const [viewingAttachment, setViewingAttachment] = useState<string | null>(null);
+
+  const extractAttachment = (desc: string) => {
+    if (!desc) return { cleanDescription: '', attachment: null };
+    const match = desc.match(/\[ANEXO_NF:(.*?)\]/);
+    if (match) {
+      const cleanDescription = desc.replace(/\s*\[ANEXO_NF:.*?\]/, '');
+      return { cleanDescription, attachment: match[1] };
+    }
+    return { cleanDescription: desc, attachment: null };
+  };
 
   const [errorState, setErrorState] = useState<Record<string, boolean>>({});
 
@@ -276,6 +294,58 @@ const Cantina: React.FC = () => {
   });
 
   const [foodBank, setFoodBank] = useState<any[]>([]);
+  const [isFoodBankModalOpen, setIsFoodBankModalOpen] = useState(false);
+  const [newFoodBankItem, setNewFoodBankItem] = useState({
+    name: '',
+    quantity: '',
+    unit: 'un',
+    expiry_date: ''
+  });
+
+  const handleAddFoodBankLot = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const parsedQuantity = parseFloat(newFoodBankItem.quantity.replace(/\./g, '').replace(',', '.')) || 0;
+      const payload = {
+        name: newFoodBankItem.name,
+        quantity: parsedQuantity,
+        unit: newFoodBankItem.unit,
+        expiry_date: newFoodBankItem.expiry_date
+      };
+      
+      const { error } = await supabase.from('cantina_food_bank').insert([payload]);
+      if (error) {
+        console.warn("Table cantina_food_bank insert failed, fallback to local state:", error);
+        const localItem = {
+          id: Math.random().toString(36).substring(2),
+          ...payload
+        };
+        setFoodBank(prev => [...prev, localItem].sort((a,b) => new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime()));
+      } else {
+        fetchFoodBank();
+      }
+
+      setIsFoodBankModalOpen(false);
+      setNewFoodBankItem({ name: '', quantity: '', unit: 'un', expiry_date: '' });
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteFoodBankLot = async (id: string) => {
+    if (!confirm("Tem certeza que deseja remover este lote?")) return;
+    try {
+      const { error } = await supabase.from('cantina_food_bank').delete().eq('id', id);
+      if (error) {
+        setFoodBank(prev => prev.filter(item => item.id !== id));
+      } else {
+        fetchFoodBank();
+      }
+    } catch (err) {
+      console.error(err);
+      setFoodBank(prev => prev.filter(item => item.id !== id));
+    }
+  };
 
   const fetchFoodBank = async () => {
     try {
@@ -346,11 +416,21 @@ const Cantina: React.FC = () => {
   const handleAddRecord = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const { error } = await supabase.from('financial_records').insert([newRecord]);
+      let finalDescription = newRecord.description;
+      if (attachedFile) {
+        finalDescription += ` [ANEXO_NF:${attachedFile}]`;
+      }
+
+      const { error } = await supabase.from('financial_records').insert([{
+        ...newRecord,
+        description: finalDescription
+      }]);
       if (error) throw error;
       
       setIsModalOpen(false);
       setNewRecord({ type: 'income', amount: 0, category: 'Venda Direta', description: '', is_extraordinary: false });
+      setAttachedFile(null);
+      setAttachedFileName('');
       fetchRecords();
     } catch (err: any) {
       console.error(err);
@@ -376,10 +456,20 @@ const Cantina: React.FC = () => {
   const handleAddIngredient = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const { error } = await supabase.from('cantina_ingredients').insert([newIngredient]);
+      const parsedStock = parseFloat(newIngredientStockStr.replace(/\./g, '').replace(',', '.')) || 0;
+      const parsedCost = parseFloat(newIngredientCostStr.replace(/\./g, '').replace(',', '.')) || 0;
+      const payload = {
+        name: newIngredient.name,
+        unit: newIngredient.unit,
+        stock: parsedStock,
+        unit_cost: parsedCost
+      };
+      const { error } = await supabase.from('cantina_ingredients').insert([payload]);
       if (error) throw error;
       setIsIngredientModalOpen(false);
       setNewIngredient({ name: '', stock: 0, unit: 'un', unit_cost: 0 });
+      setNewIngredientStockStr('');
+      setNewIngredientCostStr('');
       fetchIngredients();
     } catch (err: any) {
       console.error(err);
@@ -442,6 +532,109 @@ const Cantina: React.FC = () => {
       alert('Produção concluída com sucesso!');
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const [isEditIngredientModalOpen, setIsEditIngredientModalOpen] = useState(false);
+  const [editingIngredient, setEditingIngredient] = useState<any>(null);
+  const [editIngredientStockStr, setEditIngredientStockStr] = useState('');
+  const [editIngredientCostStr, setEditIngredientCostStr] = useState('');
+
+  const [isEditRecipeModalOpen, setIsEditRecipeModalOpen] = useState(false);
+  const [editingRecipe, setEditingRecipe] = useState<any>(null);
+  const [editRecipeIngredientId, setEditRecipeIngredientId] = useState('');
+  const [editRecipeIngredientQty, setEditRecipeIngredientQty] = useState('');
+
+  const handleOpenEditIngredient = (ing: any) => {
+    setEditingIngredient(ing);
+    setEditIngredientStockStr(String(ing.stock));
+    setEditIngredientCostStr(String(ing.unit_cost));
+    setIsEditIngredientModalOpen(true);
+  };
+
+  const handleUpdateIngredient = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingIngredient) return;
+    try {
+      const parsedStock = parseFloat(editIngredientStockStr.replace(/\./g, '').replace(',', '.')) || 0;
+      const parsedCost = parseFloat(editIngredientCostStr.replace(/\./g, '').replace(',', '.')) || 0;
+      const { error } = await supabase
+        .from('cantina_ingredients')
+        .update({
+          name: editingIngredient.name,
+          unit: editingIngredient.unit,
+          stock: parsedStock,
+          unit_cost: parsedCost
+        })
+        .eq('id', editingIngredient.id);
+      if (error) throw error;
+      setIsEditIngredientModalOpen(false);
+      setEditingIngredient(null);
+      fetchIngredients();
+    } catch (err: any) {
+      console.error(err);
+      alert(`Erro ao atualizar ingrediente: ${err?.message}`);
+    }
+  };
+
+  const handleDeleteIngredient = async (id: string) => {
+    if (!confirm("Tem certeza que deseja excluir este ingrediente?")) return;
+    try {
+      const { error } = await supabase
+        .from('cantina_ingredients')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+      fetchIngredients();
+    } catch (err: any) {
+      console.error(err);
+      alert(`Erro ao deletar ingrediente: ${err?.message}`);
+    }
+  };
+
+  const handleOpenEditRecipe = (rec: any) => {
+    setEditingRecipe({
+      ...rec,
+      ingredients: rec.ingredients || []
+    });
+    setEditRecipeIngredientId('');
+    setEditRecipeIngredientQty('');
+    setIsEditRecipeModalOpen(true);
+  };
+
+  const handleUpdateRecipe = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingRecipe) return;
+    try {
+      const { error } = await supabase
+        .from('cantina_recipes')
+        .update({
+          name: editingRecipe.name,
+          ingredients: editingRecipe.ingredients
+        })
+        .eq('id', editingRecipe.id);
+      if (error) throw error;
+      setIsEditRecipeModalOpen(false);
+      setEditingRecipe(null);
+      fetchRecipes();
+    } catch (err: any) {
+      console.error(err);
+      alert(`Erro ao atualizar receita: ${err?.message}`);
+    }
+  };
+
+  const handleDeleteRecipe = async (id: string) => {
+    if (!confirm("Tem certeza que deseja excluir esta receita?")) return;
+    try {
+      const { error } = await supabase
+        .from('cantina_recipes')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+      fetchRecipes();
+    } catch (err: any) {
+      console.error(err);
+      alert(`Erro ao deletar receita: ${err?.message}`);
     }
   };
 
@@ -573,34 +766,45 @@ const Cantina: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {records.map((record) => (
-                    <tr key={record.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-6 py-4 text-sm text-gray-500">
-                        {record.date ? format(new Date(record.date), 'dd/MM/yyyy HH:mm', { locale: ptBR }) : 'Pendente'}
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex items-center">
-                          <p className="font-medium text-gray-900">{record.description}</p>
-                          {record.is_extraordinary && (
-                            <span className="ml-2 px-2 py-0.5 bg-purple-100 text-purple-600 text-[10px] font-bold uppercase rounded-full">
-                              Extraordinário
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <span className="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded-lg">
-                          {record.category}
-                        </span>
-                      </td>
-                      <td className={cn(
-                        "px-6 py-4 text-right font-bold",
-                        record.type === 'income' ? "text-green-600" : "text-red-600"
-                      )}>
-                        {record.type === 'income' ? '+' : '-'} R$ {record.amount.toFixed(2)}
-                      </td>
-                    </tr>
-                  ))}
+                  {records.map((record) => {
+                    const parsed = extractAttachment(record.description);
+                    return (
+                      <tr key={record.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-6 py-4 text-sm text-gray-500">
+                          {record.date ? format(new Date(record.date), 'dd/MM/yyyy HH:mm', { locale: ptBR }) : 'Pendente'}
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center flex-wrap gap-2">
+                            <p className="font-medium text-gray-900">{parsed.cleanDescription}</p>
+                            {record.is_extraordinary && (
+                              <span className="px-2 py-0.5 bg-purple-100 text-purple-600 text-[10px] font-bold uppercase rounded-full">
+                                Extraordinário
+                              </span>
+                            )}
+                            {parsed.attachment && (
+                              <button
+                                onClick={() => setViewingAttachment(parsed.attachment)}
+                                className="px-2 py-0.5 bg-blue-50 hover:bg-blue-100 text-blue-600 text-[10px] font-bold uppercase rounded-full flex items-center gap-0.5 transition-colors cursor-pointer"
+                              >
+                                📎 Ver NF/Recibo
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded-lg">
+                            {record.category}
+                          </span>
+                        </td>
+                        <td className={cn(
+                          "px-6 py-4 text-right font-bold",
+                          record.type === 'income' ? "text-green-600" : "text-red-600"
+                        )}>
+                          {record.type === 'income' ? '+' : '-'} R$ {record.amount.toFixed(2)}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -945,17 +1149,25 @@ const Cantina: React.FC = () => {
                 ) : (
                   <>
                     {ingredients.map(ing => (
-                      <div key={ing.id} className="p-4 flex justify-between items-center">
+                      <div key={ing.id} className="p-4 flex justify-between items-center hover:bg-gray-50 transition-colors">
                         <div>
-                          <p className="font-bold">{ing.name}</p>
+                          <p className="font-bold text-gray-900">{ing.name}</p>
                           <p className="text-xs text-gray-500">{ing.stock} {ing.unit} | R$ {ing.unit_cost.toFixed(2)}/{ing.unit}</p>
                         </div>
-                        <button 
-                          onClick={() => handleAdjustIngredient(ing)}
-                          className="text-blue-600 font-bold text-xs hover:underline"
-                        >
-                          Ajustar
-                        </button>
+                        <div className="flex gap-2">
+                          <button 
+                            onClick={() => handleOpenEditIngredient(ing)}
+                            className="text-xs px-2.5 py-1 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded font-medium transition-colors"
+                          >
+                            Editar
+                          </button>
+                          <button 
+                            onClick={() => handleDeleteIngredient(ing.id)}
+                            className="text-xs px-2.5 py-1 text-red-600 bg-red-50 hover:bg-red-100 rounded font-medium transition-colors"
+                          >
+                            Excluir
+                          </button>
+                        </div>
                       </div>
                     ))}
                     {ingredients.length === 0 && <div className="p-8 text-center text-gray-400">Nenhum ingrediente cadastrado.</div>}
@@ -965,8 +1177,8 @@ const Cantina: React.FC = () => {
             </div>
 
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-              <div className="p-4 bg-gray-50 border-b border-gray-100 font-bold text-sm uppercase text-gray-500">Receitas Disponíveis</div>
-              <div className="divide-y divide-gray-100">
+              <div className="p-4 bg-gray-50 border-b border-gray-100 font-bold text-sm uppercase text-gray-500 font-sans">Receitas Disponíveis</div>
+              <div className="divide-y divide-gray-100 max-h-[400px] overflow-auto">
                 {errorState.recipes ? (
                   <div className="p-8 text-center bg-yellow-50 text-yellow-800">
                     <p className="font-bold mb-1">Módulo de Receitas em Configuração</p>
@@ -975,20 +1187,37 @@ const Cantina: React.FC = () => {
                 ) : (
                   <>
                     {recipes.map(rec => (
-                      <div key={rec.id} className="p-4">
+                      <div key={rec.id} className="p-4 hover:bg-gray-50 transition-colors">
                         <div className="flex justify-between items-start mb-2">
-                          <h4 className="font-bold">{rec.name}</h4>
-                          <button 
-                            onClick={() => {
-                              setSelectedRecipe(rec);
-                              setIsProductionModalOpen(true);
-                            }}
-                            className="px-3 py-1 bg-green-600 text-white text-[10px] font-bold rounded-lg uppercase"
-                          >
-                            Produzir
-                          </button>
+                          <div>
+                            <h4 className="font-bold text-gray-900">{rec.name}</h4>
+                            <p className="text-xs text-gray-500 mt-0.5">{rec.ingredients?.length || 0} ingredientes utilizados.</p>
+                          </div>
+                          <div className="flex gap-1.5">
+                            <button 
+                              onClick={() => {
+                                setSelectedRecipe(rec);
+                                setProductionQuantity(1);
+                                setIsProductionModalOpen(true);
+                              }}
+                              className="px-2.5 py-1 bg-green-600 hover:bg-green-700 text-white text-[10px] font-bold rounded uppercase transition-colors"
+                            >
+                              Produzir
+                            </button>
+                            <button 
+                              onClick={() => handleOpenEditRecipe(rec)}
+                              className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-600 text-[10px] font-bold rounded uppercase transition-colors"
+                            >
+                              Editar
+                            </button>
+                            <button 
+                              onClick={() => handleDeleteRecipe(rec.id)}
+                              className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-600 text-[10px] font-bold rounded uppercase transition-colors"
+                            >
+                              ✕
+                            </button>
+                          </div>
                         </div>
-                        <p className="text-xs text-gray-500">{rec.ingredients?.length || 0} ingredientes utilizados.</p>
                       </div>
                     ))}
                     {recipes.length === 0 && <div className="p-8 text-center text-gray-400">Nenhuma receita cadastrada.</div>}
@@ -1007,7 +1236,10 @@ const Cantina: React.FC = () => {
               <h2 className="text-xl font-bold">Banco de Alimentos</h2>
               <p className="text-sm text-gray-500">Controle de excedentes e validade.</p>
             </div>
-            <button className="w-full md:w-auto flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700">
+            <button 
+              onClick={() => setIsFoodBankModalOpen(true)}
+              className="w-full md:w-auto flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-colors shadow-sm"
+            >
               <Plus size={18} className="mr-2" /> Adicionar Lote
             </button>
           </div>
@@ -1023,49 +1255,123 @@ const Cantina: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {errorState.foodBank ? (
-                  <tr>
-                    <td colSpan={4} className="px-6 py-12 text-center bg-yellow-50 text-yellow-800">
-                      <p className="font-bold mb-1">Módulo de Banco de Alimentos em Configuração</p>
-                      <p className="text-xs">O banco de dados para controle de excedentes será habilitado em breve.</p>
+                {foodBank.map((item) => (
+                  <tr key={item.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-6 py-4 font-medium">{item.name}</td>
+                    <td className="px-6 py-4 text-sm">{item.quantity} {item.unit}</td>
+                    <td className="px-6 py-4 text-sm">
+                      <div className="flex items-center gap-2">
+                        {format(new Date(item.expiry_date + 'T12:00:00'), 'dd/MM/yyyy')}
+                        {new Date(item.expiry_date) < new Date() && (
+                          <span className="px-2 py-0.5 bg-red-100 text-red-650 text-[10px] font-bold uppercase rounded-full">
+                            Vencido
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <button 
+                        onClick={() => handleDeleteFoodBankLot(item.id)}
+                        className="text-red-600 hover:bg-red-50 p-2 rounded-lg transition-colors"
+                      >
+                        <Trash2 size={16} />
+                      </button>
                     </td>
                   </tr>
-                ) : (
-                  <>
-                    {foodBank.map((item) => (
-                      <tr key={item.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="px-6 py-4 font-medium">{item.name}</td>
-                        <td className="px-6 py-4 text-sm">{item.quantity} {item.unit}</td>
-                        <td className="px-6 py-4 text-sm">
-                          <div className="flex items-center gap-2">
-                            {format(new Date(item.expiry_date), 'dd/MM/yyyy')}
-                            {new Date(item.expiry_date) < new Date() && (
-                              <span className="px-2 py-0.5 bg-red-100 text-red-600 text-[10px] font-bold uppercase rounded-full">
-                                Vencido
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <button className="text-red-600 hover:bg-red-50 p-2 rounded-lg transition-colors">
-                            <Trash2 size={16} />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                    {foodBank.length === 0 && (
-                      <tr>
-                        <td colSpan={4} className="px-6 py-12 text-center text-gray-400">
-                          <History size={48} className="mx-auto mb-4 opacity-10" />
-                          Nenhum item no banco de alimentos.
-                        </td>
-                      </tr>
-                    )}
-                  </>
+                ))}
+                {foodBank.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="px-6 py-12 text-center text-gray-400">
+                      <History size={48} className="mx-auto mb-4 opacity-10" />
+                      Nenhum item no banco de alimentos.
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>
           </div>
+
+          {/* Modal Adicionar Lote */}
+          {isFoodBankModalOpen && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8 animate-in fade-in duration-200">
+                <h3 className="text-xl font-bold text-gray-900 mb-6">Adicionar Novo Lote</h3>
+                <form onSubmit={handleAddFoodBankLot} className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Nome do Item</label>
+                    <input 
+                      required
+                      type="text"
+                      placeholder="Ex: Arroz, Feijão, Macarrão..."
+                      className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                      value={newFoodBankItem.name}
+                      onChange={(e) => setNewFoodBankItem({...newFoodBankItem, name: e.target.value})}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Quantidade</label>
+                      <input 
+                        required
+                        type="text"
+                        placeholder="Ex: 5, 2.5..."
+                        className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                        value={newFoodBankItem.quantity}
+                        onChange={(e) => {
+                          let val = e.target.value;
+                          val = val.replace(/[^0-9,\.]/g, '');
+                          setNewFoodBankItem({...newFoodBankItem, quantity: val});
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Unidade</label>
+                      <select 
+                        required
+                        className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                        value={newFoodBankItem.unit}
+                        onChange={(e) => setNewFoodBankItem({...newFoodBankItem, unit: e.target.value})}
+                      >
+                        <option value="un">un (Unidades)</option>
+                        <option value="ML">ML (Mililitros)</option>
+                        <option value="L">L (Litros)</option>
+                        <option value="GR">GR (Gramas)</option>
+                        <option value="KG">KG (Quilogramas)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Data de Validade</label>
+                    <input 
+                      required
+                      type="date"
+                      className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                      value={newFoodBankItem.expiry_date}
+                      onChange={(e) => setNewFoodBankItem({...newFoodBankItem, expiry_date: e.target.value})}
+                    />
+                  </div>
+
+                  <div className="flex gap-3 pt-4">
+                    <button 
+                      type="button"
+                      onClick={() => setIsFoodBankModalOpen(false)}
+                      className="flex-1 py-2 border border-gray-200 rounded-lg text-sm font-medium hover:bg-gray-50"
+                    >
+                      Cancelar
+                    </button>
+                    <button 
+                      type="submit"
+                      className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 shadow-sm"
+                    >
+                      Adicionar Lote
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1309,20 +1615,46 @@ const Cantina: React.FC = () => {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Nome</label>
                 <input required className="w-full px-4 py-2 border border-gray-200 rounded-lg" value={newIngredient.name} onChange={e => setNewIngredient({...newIngredient, name: e.target.value})} />
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Unidade</label>
-                  <select className="w-full px-4 py-2 border border-gray-200 rounded-lg" value={newIngredient.unit} onChange={e => setNewIngredient({...newIngredient, unit: e.target.value})}>
-                    <option value="un">Unidade</option>
-                    <option value="kg">Quilo</option>
-                    <option value="g">Grama</option>
-                    <option value="l">Litro</option>
-                    <option value="ml">Mililitro</option>
+                  <select className="w-full px-4 py-2 border border-gray-200 rounded-lg text-sm" value={newIngredient.unit} onChange={e => setNewIngredient({...newIngredient, unit: e.target.value})}>
+                    <option value="un">Unidade (un)</option>
+                    <option value="kg">Quilo (kg)</option>
+                    <option value="g">Grama (g)</option>
+                    <option value="l">Litro (l)</option>
+                    <option value="ml">Mililitro (ml)</option>
                   </select>
                 </div>
                 <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Estoque</label>
+                  <input 
+                    required
+                    type="text"
+                    placeholder="Ex: 10, 2.5"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg text-sm"
+                    value={newIngredientStockStr}
+                    onChange={e => {
+                      let val = e.target.value;
+                      val = val.replace(/[^0-9,\.]/g, '');
+                      setNewIngredientStockStr(val);
+                    }}
+                  />
+                </div>
+                <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Custo (R$)</label>
-                  <input type="number" step="0.01" className="w-full px-4 py-2 border border-gray-200 rounded-lg" value={isNaN(newIngredient.unit_cost) ? '' : newIngredient.unit_cost} onChange={e => setNewIngredient({...newIngredient, unit_cost: parseFloat(e.target.value) || 0})} />
+                  <input 
+                    required
+                    type="text"
+                    placeholder="Ex: 1,50"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg text-sm"
+                    value={newIngredientCostStr}
+                    onChange={e => {
+                      let val = e.target.value;
+                      val = val.replace(/[^0-9,\.]/g, '');
+                      setNewIngredientCostStr(val);
+                    }}
+                  />
                 </div>
               </div>
               <div className="flex gap-3">
@@ -1337,18 +1669,293 @@ const Cantina: React.FC = () => {
       {/* Recipe Modal */}
       {isRecipeModalOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8 animate-in fade-in duration-200">
             <h2 className="text-xl font-bold mb-6">Nova Receita</h2>
             <form onSubmit={handleAddRecipe} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Nome da Receita</label>
-                <input required className="w-full px-4 py-2 border border-gray-200 rounded-lg" value={newRecipe.name} onChange={e => setNewRecipe({...newRecipe, name: e.target.value})} />
+                <input required className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm" value={newRecipe.name} onChange={e => setNewRecipe({...newRecipe, name: e.target.value})} />
+              </div>
+
+              {/* Ingredient selector section */}
+              <div className="border-t border-gray-100 pt-4">
+                <h4 className="text-sm font-bold text-gray-800 mb-2">Ingredientes da Receita</h4>
+                
+                {newRecipe.ingredients.length > 0 ? (
+                  <div className="space-y-2 max-h-40 overflow-y-auto mb-4 border border-gray-100 rounded-lg p-2 bg-gray-50">
+                    {newRecipe.ingredients.map((item, idx) => {
+                      const ingObj = ingredients.find(i => i.id === item.ingredient_id);
+                      return (
+                        <div key={idx} className="flex justify-between items-center text-xs bg-white p-2 rounded border border-gray-200 shadow-sm">
+                          <span className="font-medium text-gray-800">{ingObj?.name || 'Desconhecido'}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-gray-500 font-mono">{item.quantity} {ingObj?.unit || 'un'}</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setNewRecipe({
+                                  ...newRecipe,
+                                  ingredients: newRecipe.ingredients.filter((_, i) => i !== idx)
+                                });
+                              }}
+                              className="text-red-500 hover:text-red-700 font-bold px-1 transition-colors"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-xs text-gray-400 italic mb-4">Nenhum ingrediente adicionado a esta receita ainda.</p>
+                )}
+
+                <div className="bg-gray-50 p-3 rounded-xl border border-gray-150 space-y-3">
+                  <span className="text-xs font-bold text-gray-700 block">Adicionar Ingrediente</span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-gray-400 tracking-wider mb-0.5">Ingrediente</label>
+                      <select
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded text-xs bg-white outline-none focus:ring-1 focus:ring-blue-500"
+                        value={recipeIngredientId}
+                        onChange={(e) => setRecipeIngredientId(e.target.value)}
+                      >
+                        <option value="">-- Selecione --</option>
+                        {ingredients.map(ing => (
+                          <option key={ing.id} value={ing.id}>{ing.name} ({ing.unit})</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-gray-400 tracking-wider mb-0.5">Qtd / Medida</label>
+                      <div className="flex gap-1">
+                        <input
+                          type="text"
+                          placeholder="Qtd (ex: 2.5)"
+                          className="w-full px-2 py-1.5 border border-gray-200 rounded text-xs bg-white outline-none focus:ring-1 focus:ring-blue-500"
+                          value={recipeIngredientQty}
+                          onChange={(e) => {
+                            let val = e.target.value;
+                            val = val.replace(/[^0-9,\.]/g, '');
+                            setRecipeIngredientQty(val);
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!recipeIngredientId) {
+                              alert("Selecione um ingrediente.");
+                              return;
+                            }
+                            const parsedQty = parseFloat(recipeIngredientQty.replace(/\./g, '').replace(',', '.')) || 0;
+                            if (parsedQty <= 0) {
+                              alert("Insira uma quantidade maior que zero.");
+                              return;
+                            }
+                            // Check if already exists, then update qty or append
+                            const existingIdx = newRecipe.ingredients.findIndex(x => x.ingredient_id === recipeIngredientId);
+                            let updated = [...newRecipe.ingredients];
+                            if (existingIdx !== -1) {
+                              updated[existingIdx].quantity = parsedQty;
+                            } else {
+                              updated.push({ ingredient_id: recipeIngredientId, quantity: parsedQty });
+                            }
+                            setNewRecipe({ ...newRecipe, ingredients: updated });
+                            setRecipeIngredientId('');
+                            setRecipeIngredientQty('');
+                          }}
+                          className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-2.5 rounded transition-colors"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => setIsRecipeModalOpen(false)} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm font-medium hover:bg-gray-50">Cancelar</button>
+                <button type="submit" className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 shadow-sm" disabled={newRecipe.name === ''}>Salvar Receita</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Ingredient Modal */}
+      {isEditIngredientModalOpen && editingIngredient && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8 animate-in fade-in duration-200">
+            <h2 className="text-xl font-bold mb-6">Editar Ingrediente</h2>
+            <form onSubmit={handleUpdateIngredient} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nome</label>
+                <input required className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm" value={editingIngredient.name} onChange={e => setEditingIngredient({...editingIngredient, name: e.target.value})} />
+              </div>
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Unidade</label>
+                  <select className="w-full px-4 py-2 border border-gray-200 rounded-lg text-sm" value={editingIngredient.unit} onChange={e => setEditingIngredient({...editingIngredient, unit: e.target.value})}>
+                    <option value="un">Unidade (un)</option>
+                    <option value="kg">Quilo (kg)</option>
+                    <option value="g">Grama (g)</option>
+                    <option value="l">Litro (l)</option>
+                    <option value="ml">Mililitro (ml)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Estoque</label>
+                  <input 
+                    required
+                    type="text"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg text-sm"
+                    value={editIngredientStockStr}
+                    onChange={e => {
+                      let val = e.target.value;
+                      val = val.replace(/[^0-9,\.]/g, '');
+                      setEditIngredientStockStr(val);
+                    }}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Custo (R$)</label>
+                  <input 
+                    required
+                    type="text"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg text-sm"
+                    value={editIngredientCostStr}
+                    onChange={e => {
+                      let val = e.target.value;
+                      val = val.replace(/[^0-9,\.]/g, '');
+                      setEditIngredientCostStr(val);
+                    }}
+                  />
+                </div>
               </div>
               <div className="flex gap-3">
-                <button type="button" onClick={() => setIsRecipeModalOpen(false)} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm font-medium">Cancelar</button>
-                <button type="submit" className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium" disabled={newRecipe.name === ''}>Próximo</button>
+                <button type="button" onClick={() => { setIsEditIngredientModalOpen(false); setEditingIngredient(null); }} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm font-medium hover:bg-gray-50">Cancelar</button>
+                <button type="submit" className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 shadow-sm">Salvar Alterações</button>
               </div>
-              <p className="text-[10px] text-gray-400 italic">* Adição de ingredientes por receita será habilitada em breve no banco de dados.</p>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Recipe Modal */}
+      {isEditRecipeModalOpen && editingRecipe && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8 animate-in fade-in duration-200">
+            <h2 className="text-xl font-bold mb-6">Editar Receita</h2>
+            <form onSubmit={handleUpdateRecipe} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nome da Receita</label>
+                <input required className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm" value={editingRecipe.name} onChange={e => setEditingRecipe({...editingRecipe, name: e.target.value})} />
+              </div>
+
+              {/* Ingredient selector section */}
+              <div className="border-t border-gray-100 pt-4">
+                <h4 className="text-sm font-bold text-gray-800 mb-2">Ingredientes da Receita</h4>
+                
+                {editingRecipe.ingredients.length > 0 ? (
+                  <div className="space-y-2 max-h-40 overflow-y-auto mb-4 border border-gray-100 rounded-lg p-2 bg-gray-50">
+                    {editingRecipe.ingredients.map((item: any, idx: number) => {
+                      const ingObj = ingredients.find(i => i.id === item.ingredient_id);
+                      return (
+                        <div key={idx} className="flex justify-between items-center text-xs bg-white p-2 rounded border border-gray-200 shadow-sm">
+                          <span className="font-medium text-gray-800">{ingObj?.name || 'Desconhecido'}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-gray-500 font-mono">{item.quantity} {ingObj?.unit || 'un'}</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingRecipe({
+                                  ...editingRecipe,
+                                  ingredients: editingRecipe.ingredients.filter((_: any, i: number) => i !== idx)
+                                });
+                              }}
+                              className="text-red-500 hover:text-red-700 font-bold px-1 transition-colors"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-xs text-gray-400 italic mb-4">Nenhum ingrediente adicionado a esta receita ainda.</p>
+                )}
+
+                <div className="bg-gray-50 p-3 rounded-xl border border-gray-150 space-y-3">
+                  <span className="text-xs font-bold text-gray-700 block">Adicionar Ingrediente</span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-gray-400 tracking-wider mb-0.5">Ingrediente</label>
+                      <select
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded text-xs bg-white outline-none focus:ring-1 focus:ring-blue-500"
+                        value={editRecipeIngredientId}
+                        onChange={(e) => setEditRecipeIngredientId(e.target.value)}
+                      >
+                        <option value="">-- Selecione --</option>
+                        {ingredients.map(ing => (
+                          <option key={ing.id} value={ing.id}>{ing.name} ({ing.unit})</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-gray-400 tracking-wider mb-0.5">Qtd / Medida</label>
+                      <div className="flex gap-1">
+                        <input
+                          type="text"
+                          placeholder="Qtd (ex: 2.5)"
+                          className="w-full px-2 py-1.5 border border-gray-200 rounded text-xs bg-white outline-none focus:ring-1 focus:ring-blue-500"
+                          value={editRecipeIngredientQty}
+                          onChange={(e) => {
+                            let val = e.target.value;
+                            val = val.replace(/[^0-9,\.]/g, '');
+                            setEditRecipeIngredientQty(val);
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!editRecipeIngredientId) {
+                              alert("Selecione um ingrediente.");
+                              return;
+                            }
+                            const parsedQty = parseFloat(editRecipeIngredientQty.replace(/\./g, '').replace(',', '.')) || 0;
+                            if (parsedQty <= 0) {
+                              alert("Insira uma quantidade maior que zero.");
+                              return;
+                            }
+                            // Check if already exists, then update qty or append
+                            const existingIdx = editingRecipe.ingredients.findIndex((x: any) => x.ingredient_id === editRecipeIngredientId);
+                            let updated = [...editingRecipe.ingredients];
+                            if (existingIdx !== -1) {
+                              updated[existingIdx].quantity = parsedQty;
+                            } else {
+                              updated.push({ ingredient_id: editRecipeIngredientId, quantity: parsedQty });
+                            }
+                            setEditingRecipe({ ...editingRecipe, ingredients: updated });
+                            setEditRecipeIngredientId('');
+                            setEditRecipeIngredientQty('');
+                          }}
+                          className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-2.5 rounded transition-colors"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => { setIsEditRecipeModalOpen(false); setEditingRecipe(null); }} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm font-medium hover:bg-gray-50">Cancelar</button>
+                <button type="submit" className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 shadow-sm">Salvar Alterações</button>
+              </div>
             </form>
           </div>
         </div>
@@ -1428,6 +2035,58 @@ const Cantina: React.FC = () => {
                 />
                 <label htmlFor="extraordinary" className="text-sm text-gray-600">Evento Extraordinário</label>
               </div>
+
+              {/* NF/Recibo Upload Field */}
+              <div className="border-t border-gray-100 pt-3">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Anexar Nota Fiscal / Recibo</label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="file"
+                    accept="image/*,application/pdf,text/*"
+                    id="receipt-file-input"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        if (file.size > 800 * 1024) {
+                          alert("Para melhor desempenho, selecione um arquivo menor que 800KB.");
+                          return;
+                        }
+                        setAttachedFileName(file.name);
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                          setAttachedFile(reader.result as string);
+                        };
+                        reader.readAsDataURL(file);
+                      }
+                    }}
+                  />
+                  <label
+                    htmlFor="receipt-file-input"
+                    className="cursor-pointer px-4 py-2 border border-dashed border-gray-300 hover:border-blue-500 rounded-lg text-xs font-medium text-gray-600 hover:text-blue-600 bg-gray-50 flex items-center justify-center gap-1 transition-all"
+                  >
+                    📎 {attachedFileName ? "Alterar Anexo" : "Escolher Arquivo"}
+                  </label>
+                  {attachedFileName && (
+                    <div className="flex items-center gap-1.5 bg-blue-50 px-2.5 py-1.5 rounded-lg border border-blue-100 max-w-[200px] overflow-hidden text-ellipsis whitespace-nowrap">
+                      <span className="text-[11px] font-medium text-blue-800 truncate">{attachedFileName}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAttachedFile(null);
+                          setAttachedFileName('');
+                          const fileInput = document.getElementById('receipt-file-input') as HTMLInputElement;
+                          if (fileInput) fileInput.value = '';
+                        }}
+                        className="text-red-500 hover:text-red-700 text-xs font-bold"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
               <div className="flex gap-3 pt-4">
                 <button 
                   type="button"
@@ -1444,6 +2103,65 @@ const Cantina: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* View Attachment Modal */}
+      {viewingAttachment && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 flex flex-col max-h-[85vh]">
+            <div className="flex justify-between items-center pb-3 border-b border-gray-100 mb-4">
+              <h3 className="text-lg font-bold text-gray-900">Anexo: Nota Fiscal / Recibo</h3>
+              <button 
+                onClick={() => setViewingAttachment(null)}
+                className="text-gray-400 hover:text-gray-600 font-bold text-lg p-1 transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto bg-gray-50 rounded-xl p-3 flex justify-center items-center border border-gray-150 min-h-[250px]">
+              {viewingAttachment.startsWith('data:image/') ? (
+                <img 
+                  src={viewingAttachment} 
+                  alt="Anexo Nota Fiscal / Recibo" 
+                  className="max-w-full max-h-[55vh] object-contain rounded shadow-sm"
+                  referrerPolicy="no-referrer"
+                />
+              ) : viewingAttachment.startsWith('data:application/pdf') ? (
+                <iframe 
+                  src={viewingAttachment} 
+                  title="PDF Anexo" 
+                  className="w-full h-[55vh] rounded"
+                />
+              ) : (
+                <div className="text-center p-6">
+                  <p className="text-sm text-gray-500 mb-3">Este arquivo não pode ser visualizado diretamente no navegador.</p>
+                  <a 
+                    href={viewingAttachment} 
+                    download="anexo_financeiro" 
+                    className="inline-flex items-center justify-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm rounded-lg shadow-sm transition-colors"
+                  >
+                    Baixar Arquivo
+                  </a>
+                </div>
+              )}
+            </div>
+            <div className="pt-4 flex justify-end gap-2">
+              <a 
+                href={viewingAttachment} 
+                download="anexo_financeiro" 
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-sm rounded-lg transition-colors"
+              >
+                Baixar Anexo
+              </a>
+              <button 
+                onClick={() => setViewingAttachment(null)}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm rounded-lg shadow-sm transition-colors"
+              >
+                Fechar
+              </button>
+            </div>
           </div>
         </div>
       )}

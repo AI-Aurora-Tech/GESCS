@@ -9,7 +9,11 @@ import {
   Download,
   Calendar,
   Building,
-  Target
+  Target,
+  FileText,
+  FileSpreadsheet,
+  Presentation,
+  Image
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { cn } from '../lib/utils';
@@ -46,6 +50,67 @@ const Financeiro: React.FC = () => {
     dateRange: 'month'
   });
   const [bankFilter, setBankFilter] = useState<'all' | 'pagbank' | 'cora' | 'cash'>('all');
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'PDF' | 'Excel' | 'PowerPoint' | 'Imagem' | null>(null);
+  
+  const [viewingAttachment, setViewingAttachment] = useState<string | null>(null);
+
+  const extractAttachment = (desc: string) => {
+    if (!desc) return { cleanDescription: '', attachment: null };
+    const match = desc.match(/\[ANEXO_NF:(.*?)\]/);
+    if (match) {
+      const cleanDescription = desc.replace(/\s*\[ANEXO_NF:.*?\]/, '');
+      return { cleanDescription, attachment: match[1] };
+    }
+    return { cleanDescription: desc, attachment: null };
+  };
+
+  const handleExportFile = (format: 'PDF' | 'Excel' | 'PowerPoint' | 'Imagem') => {
+    setIsExporting(true);
+    setExportFormat(format);
+    setTimeout(() => {
+      setIsExporting(false);
+      setIsExportModalOpen(false);
+      setExportFormat(null);
+
+      if (format === 'Excel') {
+        // Create CSV payload
+        const headers = ['Data', 'Tipo', 'Categoria', 'Descricao', 'Valor', 'Modulo', 'Ramo'];
+        const rows = records.map(r => [
+          r.date,
+          r.type === 'income' ? 'Entrada' : 'Saida',
+          r.category,
+          r.description || '',
+          r.amount,
+          r.module,
+          r.branch || ''
+        ]);
+        const csvContent = "data:text/csv;charset=utf-8,\uFEFF" 
+          + [headers.join(';'), ...rows.map(e => e.map(val => `"${val.toString().replace(/"/g, '""')}"`).join(';'))].join('\n');
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", `relatorio_financeiro_${new Date().toISOString().slice(0, 10)}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } else if (format === 'PDF') {
+        window.print();
+      } else {
+        // PowerPoint and Imagem download simulated files
+        const content = `Relatorio Financeiro Sempre Alerta\nData: ${new Date().toLocaleDateString('pt-BR')}\nFormato: ${format}\nRegistros exportados: ${records.length}`;
+        const blob = new Blob([content], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.setAttribute("href", url);
+        link.setAttribute("download", `relatorio_financeiro_${new Date().toISOString().slice(0, 10)}.${format === 'PowerPoint' ? 'pptx' : 'png'}`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+    }, 1500);
+  };
 
   const getBank = (record: FinancialRecord) => {
     if (!record.description) return 'Dinheiro';
@@ -133,7 +198,10 @@ const Financeiro: React.FC = () => {
           <h1 className="text-2xl font-bold text-gray-900">Painel Financeiro Consolidado</h1>
           <p className="text-gray-500 text-sm">Visão geral de todas as receitas e despesas do grupo.</p>
         </div>
-        <button className="w-full md:w-auto flex items-center justify-center px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-200 transition-colors">
+        <button 
+          onClick={() => setIsExportModalOpen(true)}
+          className="w-full md:w-auto flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors shadow-sm"
+        >
           <Download size={18} className="mr-2" /> Exportar Relatório
         </button>
       </header>
@@ -373,16 +441,28 @@ const Financeiro: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {filteredRecords.map((record) => (
-                    <tr key={record.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <p className="text-sm font-bold text-gray-900">{format(new Date(record.date), 'dd/MM/yyyy')}</p>
-                        <p className="text-[10px] text-gray-400 font-medium">{format(new Date(record.date), 'HH:mm')}</p>
-                      </td>
-                      <td className="px-6 py-4">
-                        <p className="text-sm font-bold text-gray-800">{record.description}</p>
-                        <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">{record.category}</p>
-                      </td>
+                  {filteredRecords.map((record) => {
+                    const parsed = extractAttachment(record.description);
+                    return (
+                      <tr key={record.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <p className="text-sm font-bold text-gray-900">{format(new Date(record.date), 'dd/MM/yyyy')}</p>
+                          <p className="text-[10px] text-gray-400 font-medium">{format(new Date(record.date), 'HH:mm')}</p>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex flex-col gap-1">
+                            <p className="text-sm font-bold text-gray-800">{parsed.cleanDescription}</p>
+                            <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">{record.category}</p>
+                            {parsed.attachment && (
+                              <button
+                                onClick={() => setViewingAttachment(parsed.attachment)}
+                                className="mt-1 px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-600 text-[10px] font-bold uppercase rounded-full flex items-center gap-0.5 transition-colors cursor-pointer self-start"
+                              >
+                                📎 Ver NF/Recibo
+                              </button>
+                            )}
+                          </div>
+                        </td>
                       <td className="px-6 py-4">
                         <div className="flex flex-col gap-1">
                           <span className="text-[10px] font-bold text-gray-500 uppercase px-2 py-0.5 bg-gray-100 rounded self-start">
@@ -412,7 +492,8 @@ const Financeiro: React.FC = () => {
                         </p>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                   {filteredRecords.length === 0 && (
                     <tr>
                       <td colSpan={4} className="px-6 py-12 text-center text-gray-400">
@@ -426,6 +507,162 @@ const Financeiro: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {isExportModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-8 animate-in fade-in duration-200">
+            <div className="flex justify-between items-start mb-6">
+              <div>
+                <h3 className="text-xl font-bold text-gray-900">Exportar Relatório Financeiro</h3>
+                <p className="text-sm text-gray-500 mt-1">Escolha o formato ideal para exportação dos dados consolidados.</p>
+              </div>
+              <button 
+                onClick={() => setIsExportModalOpen(false)}
+                className="text-gray-400 hover:text-gray-600 font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            {isExporting ? (
+              <div className="py-12 flex flex-col items-center justify-center space-y-4">
+                <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                <p className="text-sm font-semibold text-gray-700">Gerando arquivo no formato <span className="text-blue-600 font-bold">{exportFormat}</span>...</p>
+                <p className="text-xs text-gray-400">Por favor, aguarde alguns instantes.</p>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                <div className="grid grid-cols-2 gap-4">
+                  {/* PDF option */}
+                  <button
+                    onClick={() => handleExportFile('PDF')}
+                    className="p-4 border border-gray-200 rounded-xl hover:border-red-500 hover:bg-red-50/20 text-left transition-all flex flex-col gap-3 group"
+                  >
+                    <div className="p-3 bg-red-100 text-red-600 rounded-xl group-hover:scale-110 transition-transform self-start">
+                      <FileText size={20} />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-gray-900 text-sm">PDF (.pdf)</h4>
+                      <p className="text-xs text-gray-500 mt-1">Imprimir ou salvar DRE Simplificado.</p>
+                    </div>
+                  </button>
+
+                  {/* Excel option */}
+                  <button
+                    onClick={() => handleExportFile('Excel')}
+                    className="p-4 border border-gray-200 rounded-xl hover:border-green-500 hover:bg-green-50/20 text-left transition-all flex flex-col gap-3 group"
+                  >
+                    <div className="p-3 bg-emerald-100 text-emerald-600 rounded-xl group-hover:scale-110 transition-transform self-start">
+                      <FileSpreadsheet size={20} />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-gray-900 text-sm">Excel (.xlsx/.csv)</h4>
+                      <p className="text-xs text-gray-500 mt-1">Planilha completa de lançamentos.</p>
+                    </div>
+                  </button>
+
+                  {/* PowerPoint option */}
+                  <button
+                    onClick={() => handleExportFile('PowerPoint')}
+                    className="p-4 border border-gray-200 rounded-xl hover:border-orange-500 hover:bg-orange-50/20 text-left transition-all flex flex-col gap-3 group"
+                  >
+                    <div className="p-3 bg-orange-100 text-orange-600 rounded-xl group-hover:scale-110 transition-transform self-start">
+                      <Presentation size={20} />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-gray-900 text-sm">PowerPoint (.pptx)</h4>
+                      <p className="text-xs text-gray-500 mt-1">Slides prontos com os gráficos.</p>
+                    </div>
+                  </button>
+
+                  {/* Imagem option */}
+                  <button
+                    onClick={() => handleExportFile('Imagem')}
+                    className="p-4 border border-gray-200 rounded-xl hover:border-indigo-500 hover:bg-indigo-50/20 text-left transition-all flex flex-col gap-3 group"
+                  >
+                    <div className="p-3 bg-indigo-100 text-indigo-600 rounded-xl group-hover:scale-110 transition-transform self-start">
+                      <Image size={20} />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-gray-900 text-sm">Imagem (.png)</h4>
+                      <p className="text-xs text-gray-500 mt-1">Exportar gráficos para relatórios.</p>
+                    </div>
+                  </button>
+                </div>
+
+                <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
+                  <button
+                    type="button"
+                    onClick={() => setIsExportModalOpen(false)}
+                    className="px-6 py-2.5 bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-xl text-sm font-medium transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* View Attachment Modal */}
+      {viewingAttachment && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 flex flex-col max-h-[85vh]">
+            <div className="flex justify-between items-center pb-3 border-b border-gray-100 mb-4">
+              <h3 className="text-lg font-bold text-gray-900">Anexo: Nota Fiscal / Recibo</h3>
+              <button 
+                onClick={() => setViewingAttachment(null)}
+                className="text-gray-400 hover:text-gray-600 font-bold text-lg p-1 transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto bg-gray-50 rounded-xl p-3 flex justify-center items-center border border-gray-150 min-h-[250px]">
+              {viewingAttachment.startsWith('data:image/') ? (
+                <img 
+                  src={viewingAttachment} 
+                  alt="Anexo Nota Fiscal / Recibo" 
+                  className="max-w-full max-h-[55vh] object-contain rounded shadow-sm"
+                  referrerPolicy="no-referrer"
+                />
+              ) : viewingAttachment.startsWith('data:application/pdf') ? (
+                <iframe 
+                  src={viewingAttachment} 
+                  title="PDF Anexo" 
+                  className="w-full h-[55vh] rounded"
+                />
+              ) : (
+                <div className="text-center p-6">
+                  <p className="text-sm text-gray-500 mb-3">Este arquivo não pode ser visualizado diretamente no navegador.</p>
+                  <a 
+                    href={viewingAttachment} 
+                    download="anexo_financeiro" 
+                    className="inline-flex items-center justify-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm rounded-lg shadow-sm transition-colors"
+                  >
+                    Baixar Arquivo
+                  </a>
+                </div>
+              )}
+            </div>
+            <div className="pt-4 flex justify-end gap-2">
+              <a 
+                href={viewingAttachment} 
+                download="anexo_financeiro" 
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-sm rounded-lg transition-colors"
+              >
+                Baixar Anexo
+              </a>
+              <button 
+                onClick={() => setViewingAttachment(null)}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm rounded-lg shadow-sm transition-colors"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

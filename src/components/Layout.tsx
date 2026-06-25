@@ -16,7 +16,8 @@ import {
   EyeOff,
   AlertCircle,
   CheckCircle2,
-  DollarSign
+  DollarSign,
+  Calendar
 } from 'lucide-react';
 import { useAuth } from '../AuthContext';
 import { cn } from '../lib/utils';
@@ -76,7 +77,8 @@ const Layout: React.FC = () => {
   };
 
   const navigation = [
-    { name: 'Dashboard', href: '/', icon: LayoutDashboard }
+    { name: 'Dashboard', href: '/', icon: LayoutDashboard },
+    { name: 'Agenda', href: '/agenda', icon: Calendar }
   ];
 
   const role = profile?.role || '';

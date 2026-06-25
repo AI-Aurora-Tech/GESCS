@@ -11,6 +11,7 @@ import ScoutAI from './pages/ScoutAI';
 import Dashboard from './pages/Dashboard';
 import Login from './pages/Login';
 import Users from './pages/Users';
+import Agenda from './pages/Agenda';
 
 import ForcePasswordChange from './components/ForcePasswordChange';
 
@@ -50,6 +51,7 @@ const App: React.FC = () => {
             <Route path="financeiro" element={<ProtectedRoute allowedRoles={['financeiro', 'admin_']}><Financeiro /></ProtectedRoute>} />
             <Route path="scouts" element={<ProtectedRoute allowedRoles={['scout']}><Scouts /></ProtectedRoute>} />
             <Route path="inventory" element={<ProtectedRoute allowedRoles={['ativos']}><Inventory /></ProtectedRoute>} />
+            <Route path="agenda" element={<Agenda />} />
             <Route path="users" element={<ProtectedRoute allowedRoles={['admin_']}><Users /></ProtectedRoute>} />
           </Route>
         </Routes>
