@@ -13,7 +13,10 @@ import {
   CreditCard,
   Pencil,
   Trash2,
-  ChefHat
+  ChefHat,
+  Truck,
+  Package,
+  Users
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { cn } from '../lib/utils';
@@ -34,9 +37,125 @@ interface FinancialRecord {
   receipt_base64?: string | null;
 }
 
+interface CantinaSupplier {
+  id: string;
+  name: string;
+  category: string;
+  phone?: string;
+  email?: string;
+}
+
+interface CantinaSchedule {
+  id: string;
+  date: string;
+  event_name: string;
+  member_name: string;
+  role: string;
+  shift: string;
+}
+
+interface CantinaPackaging {
+  id: string;
+  name: string;
+  quantity: number;
+}
+
+const DEFAULT_SUPPLIERS: CantinaSupplier[] = [
+  { id: 'sup-1', name: 'TC Carnes', category: 'Carnes', phone: '(11) 99999-0001', email: 'contato@tccarnes.com' },
+  { id: 'sup-2', name: 'HS Bebidas', category: 'Bebidas', phone: '(11) 99999-0002', email: 'contato@hsbebidas.com' },
+  { id: 'sup-3', name: 'Sendas Distribuidora', category: 'Distribuidora', phone: '(11) 99999-0003', email: 'contato@sendas.com' },
+  { id: 'sup-4', name: 'Carvão ABC', category: 'Carvão', phone: '(11) 99999-0004', email: 'contato@carvaoabc.com' },
+  { id: 'sup-5', name: 'Sumida Comercio', category: 'Geral', phone: '(11) 99999-0005', email: 'contato@sumida.com' },
+  { id: 'sup-6', name: 'Hortifruti NihonIII', category: 'Hortifruti', phone: '(11) 99999-0006', email: 'contato@nihon3.com' },
+  { id: 'sup-7', name: 'Mecantil Rizzo', category: 'Geral', phone: '(11) 99999-0007', email: 'contato@mercantilrizzo.com' },
+  { id: 'sup-8', name: 'CDBU', category: 'Geral', phone: '(11) 99999-0008', email: 'contato@cdbu.com' },
+  { id: 'sup-9', name: 'VMS Supermercados', category: 'Supermercado', phone: '(11) 99999-0009', email: 'contato@vms.com' },
+  { id: 'sup-10', name: 'Dedal', category: 'Geral', phone: '(11) 99999-0010', email: 'contato@dedal.com' },
+  { id: 'sup-11', name: 'Padaria Samara', category: 'Padaria', phone: '(11) 99999-0011', email: 'contato@padariasamara.com' },
+  { id: 'sup-12', name: 'WHS Supermercados', category: 'Supermercado', phone: '(11) 99999-0012', email: 'contato@whs.com' },
+  { id: 'sup-13', name: 'Chocolate & CIA', category: 'Chocolates', phone: '(11) 99999-0013', email: 'contato@chocolatecia.com' },
+  { id: 'sup-14', name: 'Kalunga', category: 'Papelaria / Escritório', phone: '(11) 99999-0014', email: 'contato@kalunga.com' },
+  { id: 'sup-15', name: 'Rizzo Impor', category: 'Importados', phone: '(11) 99999-0015', email: 'contato@rizzoimpor.com' },
+  { id: 'sup-16', name: 'Tio Gil Magazine', category: 'Geral', phone: '(11) 99999-0016', email: 'contato@tiogil.com' },
+  { id: 'sup-17', name: 'Gpark', category: 'Geral', phone: '(11) 99999-0017', email: 'contato@gpark.com' },
+  { id: 'sup-18', name: 'Porto das Festas e Fantasias', category: 'Festas e Fantasias', phone: '(11) 99999-0018', email: 'contato@portofestas.com' },
+  { id: 'sup-19', name: 'Niazi Chohfi Artefatos', category: 'Tecidos e Enxovais', phone: '(11) 99999-0019', email: 'contato@niazi.com' },
+  { id: 'sup-20', name: 'Auto Posto Garoupa', category: 'Combustível / Conveniência', phone: '(11) 99999-0020', email: 'contato@postogaroupa.com' },
+  { id: 'sup-21', name: 'Nazuh Tana', category: 'Geral', phone: '(11) 99999-0021', email: 'contato@nazuh.com' },
+  { id: 'sup-22', name: 'Churrasco é o Nome', category: 'Churrasco', phone: '(11) 99999-0022', email: 'contato@churrascoenome.com' },
+];
+
+const DEFAULT_PACKAGING: CantinaPackaging[] = [
+  { id: 'pkg-1', name: 'Copo AltaCoppo 400ml', quantity: 4 },
+  { id: 'pkg-2', name: 'Copo Super Premium 400 ml', quantity: 6 },
+  { id: 'pkg-3', name: 'Copo Super Premium 500 ml', quantity: 2 },
+  { id: 'pkg-4', name: 'Copo Chopp 440ml c/50', quantity: 6 },
+  { id: 'pkg-5', name: 'Prato KeroCopo Branco 15 cx c50x10', quantity: 2 },
+  { id: 'pkg-6', name: 'Pote Meiwa MC300 C/300', quantity: 1 },
+  { id: 'pkg-7', name: 'Pote Prafesta 350ml c24', quantity: 4 },
+  { id: 'pkg-8', name: 'Pote 355 ml', quantity: 15 },
+  { id: 'pkg-9', name: 'Kit Akta 380ml', quantity: 4 },
+  { id: 'pkg-10', name: 'Colher Refil c/50', quantity: 5 },
+  { id: 'pkg-11', name: 'Colher Refeição Casual c/50', quantity: 8 },
+  { id: 'pkg-12', name: 'Guardanapo cx30x100', quantity: 1 },
+  { id: 'pkg-13', name: 'Guardanapo Scott c/50', quantity: 21 },
+  { id: 'pkg-14', name: 'Guardanapo 22x20', quantity: 10 },
+  { id: 'pkg-15', name: 'Papel Toalha c/12x2', quantity: 1 },
+  { id: 'pkg-16', name: 'Toalha EconoBom 2RL', quantity: 12 },
+  { id: 'pkg-17', name: 'Papel Aluminio 30x40', quantity: 20 },
+  { id: 'pkg-18', name: 'Plástico Cristal com Papel', quantity: 10 },
+  { id: 'pkg-19', name: 'Plástico Térmico', quantity: 1 },
+  { id: 'pkg-20', name: 'Sacola 3c', quantity: 2 },
+  { id: 'pkg-21', name: 'Sacola Papel', quantity: 1 },
+  { id: 'pkg-22', name: 'Luva Latex TAM G CX c/100', quantity: 1 },
+  { id: 'pkg-23', name: 'Luvas', quantity: 3 },
+  { id: 'pkg-24', name: 'Bobinas', quantity: 5 },
+  { id: 'pkg-25', name: 'Bandeja Funda', quantity: 1 },
+];
+
+const DEFAULT_SCHEDULE: CantinaSchedule[] = [
+  { id: 'sch-1', date: '2026-07-18', event_name: 'Atividade de Sábado', member_name: 'Sonia Regina', role: 'Cozinha', shift: 'Integral' },
+  { id: 'sch-2', date: '2026-07-18', event_name: 'Atividade de Sábado', member_name: 'Carlos Alberto', role: 'Caixa', shift: 'Manhã' },
+  { id: 'sch-3', date: '2026-07-25', event_name: 'Bazar do Grupo', member_name: 'Marcia Souza', role: 'Apoio', shift: 'Tarde' },
+];
+
 const Cantina: React.FC = () => {
   const { user, profile, loading: authLoading } = useAuth();
-  const [activeTab, setActiveTab] = useState<'financeiro' | 'pdv_cantina' | 'materiais' | 'receitas' | 'margem' | 'banco' | 'movimentacao' | 'relatorios' | 'configuracoes'>('financeiro');
+  const [activeTab, setActiveTab] = useState<'financeiro' | 'pdv_cantina' | 'materiais' | 'receitas' | 'margem' | 'banco' | 'movimentacao' | 'relatorios' | 'configuracoes' | 'fornecedores' | 'escala' | 'embalagens'>('financeiro');
+  
+  // Suppliers state
+  const [suppliers, setSuppliers] = useState<CantinaSupplier[]>(DEFAULT_SUPPLIERS);
+  const [isSupplierModalOpen, setIsSupplierModalOpen] = useState(false);
+  const [editingSupplier, setEditingSupplier] = useState<CantinaSupplier | null>(null);
+  const [newSupplier, setNewSupplier] = useState({
+    name: '',
+    category: 'Bebidas',
+    phone: '',
+    email: ''
+  });
+
+  // Schedule state
+  const [schedule, setSchedule] = useState<CantinaSchedule[]>(DEFAULT_SCHEDULE);
+  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
+  const [editingSchedule, setEditingSchedule] = useState<CantinaSchedule | null>(null);
+  const [newSchedule, setNewSchedule] = useState({
+    date: new Date().toISOString().split('T')[0],
+    event_name: '',
+    member_name: '',
+    role: 'Cozinha',
+    shift: 'Integral'
+  });
+  const [scoutMembersList, setScoutMembersList] = useState<any[]>([]);
+
+  // Packaging state
+  const [packaging, setPackaging] = useState<CantinaPackaging[]>(DEFAULT_PACKAGING);
+  const [isPackagingModalOpen, setIsPackagingModalOpen] = useState(false);
+  const [editingPackaging, setEditingPackaging] = useState<CantinaPackaging | null>(null);
+  const [newPackaging, setNewPackaging] = useState({
+    name: '',
+    quantity: 0
+  });
+  const [newPackagingQtyStr, setNewPackagingQtyStr] = useState('');
   const [records, setRecords] = useState<FinancialRecord[]>([]);
   const [materials, setMaterials] = useState<any[]>([]);
   const [ingredients, setIngredients] = useState<any[]>([]);
@@ -369,6 +488,55 @@ const Cantina: React.FC = () => {
     }
   };
 
+  const fetchSuppliers = async () => {
+    try {
+      const { data, error } = await supabase.from('cantina_suppliers').select('*').order('name', { ascending: true });
+      if (error) {
+        console.warn("Table cantina_suppliers fetch failed, using default suppliers list.");
+      } else if (data && data.length > 0) {
+        setSuppliers(data);
+      }
+    } catch (err) {
+      console.warn("Could not load suppliers, using defaults.", err);
+    }
+  };
+
+  const fetchSchedule = async () => {
+    try {
+      const { data, error } = await supabase.from('cantina_schedule').select('*').order('date', { ascending: true });
+      if (error) {
+        console.warn("Table cantina_schedule fetch failed, using default schedule.");
+      } else if (data) {
+        setSchedule(data);
+      }
+    } catch (err) {
+      console.warn("Could not load schedule, using defaults.", err);
+    }
+  };
+
+  const fetchPackaging = async () => {
+    try {
+      const { data, error } = await supabase.from('cantina_packaging').select('*').order('name', { ascending: true });
+      if (error) {
+        console.warn("Table cantina_packaging fetch failed, using default packaging list.");
+      } else if (data && data.length > 0) {
+        setPackaging(data);
+      }
+    } catch (err) {
+      console.warn("Could not load packaging, using defaults.", err);
+    }
+  };
+
+  const fetchScoutMembersForSchedule = async () => {
+    try {
+      const { data, error } = await supabase.from('scout_members').select('id, name').order('name', { ascending: true });
+      if (error) throw error;
+      if (data) setScoutMembersList(data);
+    } catch (err) {
+      console.warn("Could not load scout members list for schedule dropdown", err);
+    }
+  };
+
   useEffect(() => {
     if (!user || authLoading) return;
 
@@ -377,6 +545,10 @@ const Cantina: React.FC = () => {
     fetchIngredients();
     fetchRecipes();
     fetchFoodBank();
+    fetchSuppliers();
+    fetchSchedule();
+    fetchPackaging();
+    fetchScoutMembersForSchedule();
 
     const recordsSubscription = supabase
       .channel('records_changes')
@@ -393,10 +565,28 @@ const Cantina: React.FC = () => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'cantina_ingredients' }, () => fetchIngredients())
       .subscribe();
 
+    const suppliersSubscription = supabase
+      .channel('suppliers_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'cantina_suppliers' }, () => fetchSuppliers())
+      .subscribe();
+
+    const scheduleSubscription = supabase
+      .channel('schedule_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'cantina_schedule' }, () => fetchSchedule())
+      .subscribe();
+
+    const packagingSubscription = supabase
+      .channel('packaging_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'cantina_packaging' }, () => fetchPackaging())
+      .subscribe();
+
     return () => {
       supabase.removeChannel(recordsSubscription);
       supabase.removeChannel(materialsSubscription);
       supabase.removeChannel(ingredientsSubscription);
+      supabase.removeChannel(suppliersSubscription);
+      supabase.removeChannel(scheduleSubscription);
+      supabase.removeChannel(packagingSubscription);
     };
   }, [user, authLoading]);
 
@@ -408,6 +598,182 @@ const Cantina: React.FC = () => {
     
     if (data) setRecords(data);
     if (error) console.error(error);
+  };
+
+  // --- Suppliers Handlers ---
+  const handleAddSupplier = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      if (editingSupplier) {
+        const { error } = await supabase
+          .from('cantina_suppliers')
+          .update({
+            name: editingSupplier.name,
+            category: editingSupplier.category,
+            phone: editingSupplier.phone,
+            email: editingSupplier.email
+          })
+          .eq('id', editingSupplier.id);
+
+        if (error) {
+          console.warn("DB update failed, using local state update:", error);
+          setSuppliers(prev => prev.map(s => s.id === editingSupplier.id ? editingSupplier : s));
+        } else {
+          fetchSuppliers();
+        }
+        setEditingSupplier(null);
+      } else {
+        const payload = { ...newSupplier };
+        const { error } = await supabase.from('cantina_suppliers').insert([payload]);
+        if (error) {
+          console.warn("DB insert failed, using local state insert:", error);
+          const localItem = { id: Math.random().toString(36).substring(2), ...payload };
+          setSuppliers(prev => [...prev, localItem]);
+        } else {
+          fetchSuppliers();
+        }
+        setNewSupplier({ name: '', category: 'Bebidas', phone: '', email: '' });
+      }
+      setIsSupplierModalOpen(false);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteSupplier = async (id: string) => {
+    if (!confirm("Tem certeza que deseja remover este fornecedor?")) return;
+    try {
+      const { error } = await supabase.from('cantina_suppliers').delete().eq('id', id);
+      if (error) {
+        console.warn("DB delete failed, updating local state:", error);
+        setSuppliers(prev => prev.filter(s => s.id !== id));
+      } else {
+        fetchSuppliers();
+      }
+    } catch (err) {
+      console.error(err);
+      setSuppliers(prev => prev.filter(s => s.id !== id));
+    }
+  };
+
+  // --- Schedule Handlers ---
+  const handleAddSchedule = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      if (editingSchedule) {
+        const { error } = await supabase
+          .from('cantina_schedule')
+          .update({
+            date: editingSchedule.date,
+            event_name: editingSchedule.event_name,
+            member_name: editingSchedule.member_name,
+            role: editingSchedule.role,
+            shift: editingSchedule.shift
+          })
+          .eq('id', editingSchedule.id);
+
+        if (error) {
+          console.warn("DB update failed, using local state update:", error);
+          setSchedule(prev => prev.map(s => s.id === editingSchedule.id ? editingSchedule : s));
+        } else {
+          fetchSchedule();
+        }
+        setEditingSchedule(null);
+      } else {
+        const payload = { ...newSchedule };
+        const { error } = await supabase.from('cantina_schedule').insert([payload]);
+        if (error) {
+          console.warn("DB insert failed, using local state insert:", error);
+          const localItem = { id: Math.random().toString(36).substring(2), ...payload };
+          setSchedule(prev => [...prev, localItem]);
+        } else {
+          fetchSchedule();
+        }
+        setNewSchedule({
+          date: new Date().toISOString().split('T')[0],
+          event_name: '',
+          member_name: '',
+          role: 'Cozinha',
+          shift: 'Integral'
+        });
+      }
+      setIsScheduleModalOpen(false);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteSchedule = async (id: string) => {
+    if (!confirm("Tem certeza que deseja remover esta escala?")) return;
+    try {
+      const { error } = await supabase.from('cantina_schedule').delete().eq('id', id);
+      if (error) {
+        console.warn("DB delete failed, updating local state:", error);
+        setSchedule(prev => prev.filter(s => s.id !== id));
+      } else {
+        fetchSchedule();
+      }
+    } catch (err) {
+      console.error(err);
+      setSchedule(prev => prev.filter(s => s.id !== id));
+    }
+  };
+
+  // --- Packaging Handlers ---
+  const handleAddPackaging = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const parsedQuantity = parseInt(newPackagingQtyStr.replace(/\./g, '')) || 0;
+      if (editingPackaging) {
+        const updatedObj = { ...editingPackaging, quantity: parsedQuantity };
+        const { error } = await supabase
+          .from('cantina_packaging')
+          .update({
+            name: updatedObj.name,
+            quantity: updatedObj.quantity
+          })
+          .eq('id', updatedObj.id);
+
+        if (error) {
+          console.warn("DB update failed, using local state update:", error);
+          setPackaging(prev => prev.map(p => p.id === updatedObj.id ? updatedObj : p));
+        } else {
+          fetchPackaging();
+        }
+        setEditingPackaging(null);
+      } else {
+        const payload = { name: newPackaging.name, quantity: parsedQuantity };
+        const { error } = await supabase.from('cantina_packaging').insert([payload]);
+        if (error) {
+          console.warn("DB insert failed, using local state insert:", error);
+          const localItem = { id: Math.random().toString(36).substring(2), ...payload };
+          setPackaging(prev => [...prev, localItem]);
+        } else {
+          fetchPackaging();
+        }
+        setNewPackaging({ name: '', quantity: 0 });
+        setNewPackagingQtyStr('');
+      }
+      setIsPackagingModalOpen(false);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeletePackaging = async (id: string) => {
+    if (!confirm("Tem certeza que deseja remover esta embalagem?")) return;
+    try {
+      const { error } = await supabase.from('cantina_packaging').delete().eq('id', id);
+      if (error) {
+        console.warn("DB delete failed, updating local state:", error);
+        setPackaging(prev => prev.filter(p => p.id !== id));
+      } else {
+        fetchPackaging();
+      }
+    } catch (err) {
+      console.error(err);
+      setPackaging(prev => prev.filter(p => p.id !== id));
+    }
   };
 
   const fetchMaterials = async () => {
@@ -681,7 +1047,10 @@ const Cantina: React.FC = () => {
     { id: 'financeiro', label: 'Financeiro', icon: DollarSign },
     { id: 'pdv_cantina', label: 'Frente de Caixa (PDV)', icon: CreditCard },
     { id: 'materiais', label: 'Estoque Venda', icon: Plus },
-    { id: 'receitas', label: 'Receitas/Produção', icon: FileText },
+    { id: 'receitas', label: 'Receitas/Produção', icon: ChefHat },
+    { id: 'embalagens', label: 'Embalagens', icon: Package },
+    { id: 'fornecedores', label: 'Fornecedores', icon: Truck },
+    { id: 'escala', label: 'Escala Equipe', icon: Calendar },
     { id: 'margem', label: 'Calculadora Margem', icon: TrendingUp },
     { id: 'banco', label: 'Banco Alimentos', icon: History },
     { id: 'movimentacao', label: 'Histórico', icon: History },
@@ -1601,6 +1970,303 @@ const Cantina: React.FC = () => {
         );
       })()}
 
+      {activeTab === 'embalagens' && (
+        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+              <h2 className="text-xl font-bold text-gray-900">Módulo de Embalagens e Descartáveis</h2>
+              <p className="text-xs text-gray-500">Controle de suprimentos, copos, talheres, guardanapos e embalagens para eventos.</p>
+            </div>
+            <button 
+              onClick={() => {
+                setEditingPackaging(null);
+                setNewPackaging({ name: '', quantity: 0 });
+                setNewPackagingQtyStr('');
+                setIsPackagingModalOpen(true);
+              }}
+              className="w-full md:w-auto flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 shadow-sm transition-colors"
+            >
+              <Plus size={18} className="mr-2" /> Nova Embalagem
+            </button>
+          </div>
+
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <div className="p-4 bg-gray-50/50 border-b border-gray-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+              <span className="font-bold text-sm uppercase text-gray-500">Lista de Materiais de Embalagem</span>
+              <div className="text-xs text-gray-500 font-medium">Total de Itens: {packaging.length} | Quantidade Acumulada: {packaging.reduce((acc, p) => acc + (Number(p.quantity) || 0), 0)}</div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-gray-100 bg-gray-50 text-xs font-bold text-gray-500 uppercase">
+                    <th className="p-4">Nome da Embalagem / Item</th>
+                    <th className="p-4 text-center">Quantidade em Estoque</th>
+                    <th className="p-4 text-center">Status de Suprimento</th>
+                    <th className="p-4 text-right">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 text-sm">
+                  {packaging.map((item) => {
+                    const qtyVal = Number(item.quantity) || 0;
+                    const lowStock = qtyVal <= 2;
+                    return (
+                      <tr key={item.id} className="hover:bg-gray-50/50 transition-colors">
+                        <td className="p-4 font-semibold text-gray-900">{item.name}</td>
+                        <td className="p-4 text-center font-mono font-bold text-blue-600 bg-blue-50/20">{qtyVal}</td>
+                        <td className="p-4 text-center">
+                          <span className={cn(
+                            "inline-flex items-center px-2 py-0.5 rounded text-xs font-bold",
+                            lowStock ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"
+                          )}>
+                            {lowStock ? "Estoque Baixo" : "Abastecido"}
+                          </span>
+                        </td>
+                        <td className="p-4 text-right space-x-2">
+                          <button 
+                            onClick={() => {
+                              setEditingPackaging(item);
+                              setNewPackagingQtyStr(String(item.quantity));
+                              setIsPackagingModalOpen(true);
+                            }}
+                            className="p-1.5 text-slate-500 hover:text-blue-600 rounded-lg hover:bg-slate-50 inline-flex"
+                          >
+                            <Pencil size={14} />
+                          </button>
+                          <button 
+                            onClick={() => handleDeletePackaging(item.id)}
+                            className="p-1.5 text-slate-500 hover:text-red-600 rounded-lg hover:bg-slate-50 inline-flex"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'fornecedores' && (
+        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+              <h2 className="text-xl font-bold text-gray-900">Cadastro de Fornecedores</h2>
+              <p className="text-xs text-gray-500">Parceiros e distribuidores de insumos, carnes, bebidas e materiais para a cantina.</p>
+            </div>
+            <button 
+              onClick={() => {
+                setEditingSupplier(null);
+                setNewSupplier({ name: '', category: 'Bebidas', phone: '', email: '' });
+                setIsSupplierModalOpen(true);
+              }}
+              className="w-full md:w-auto flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 shadow-sm transition-colors"
+            >
+              <Plus size={18} className="mr-2" /> Novo Fornecedor
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {suppliers.map((sup) => (
+              <div key={sup.id} className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 flex flex-col justify-between hover:shadow-md transition-all">
+                <div>
+                  <div className="flex justify-between items-start mb-3">
+                    <span className="text-[10px] font-bold uppercase text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
+                      {sup.category}
+                    </span>
+                    <div className="space-x-1">
+                      <button 
+                        onClick={() => {
+                          setEditingSupplier(sup);
+                          setIsSupplierModalOpen(true);
+                        }}
+                        className="p-1 text-slate-400 hover:text-blue-600 rounded hover:bg-slate-50"
+                      >
+                        <Pencil size={14} />
+                      </button>
+                      <button 
+                        onClick={() => handleDeleteSupplier(sup.id)}
+                        className="p-1 text-slate-400 hover:text-red-600 rounded hover:bg-slate-50"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                  <h3 className="font-bold text-gray-900 text-base">{sup.name}</h3>
+                  
+                  <div className="mt-4 space-y-1.5 text-xs text-gray-600">
+                    {sup.phone && (
+                      <p className="flex items-center gap-2">
+                        <span className="font-semibold text-gray-400">Telefone:</span> {sup.phone}
+                      </p>
+                    )}
+                    {sup.email && (
+                      <p className="flex items-center gap-2">
+                        <span className="font-semibold text-gray-400">E-mail:</span> {sup.email}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'escala' && (
+        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+              <h2 className="text-xl font-bold text-gray-900">Escala da Equipe da Cantina</h2>
+              <p className="text-xs text-gray-500">Organize os voluntários, chefes e pioneiros encarregados de cada evento ou atividade.</p>
+            </div>
+            <button 
+              onClick={() => {
+                setEditingSchedule(null);
+                setNewSchedule({
+                  date: new Date().toISOString().split('T')[0],
+                  event_name: '',
+                  member_name: scoutMembersList.length > 0 ? scoutMembersList[0].name : '',
+                  role: 'Cozinha',
+                  shift: 'Integral'
+                });
+                setIsScheduleModalOpen(true);
+              }}
+              className="w-full md:w-auto flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 shadow-sm transition-colors"
+            >
+              <Plus size={18} className="mr-2" /> Escalar Membro
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2 space-y-6">
+              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
+                  <Calendar size={18} className="text-blue-600" />
+                  Próximas Atividades e Eventos Escalados
+                </h3>
+                
+                {schedule.length === 0 ? (
+                  <div className="text-center py-8 text-gray-400">Nenhuma escala programada.</div>
+                ) : (
+                  <div className="space-y-4">
+                    {Object.entries(
+                      schedule.reduce((acc, curr) => {
+                        const key = `${curr.event_name || 'Atividade'} - ${curr.date}`;
+                        if (!acc[key]) acc[key] = [];
+                        acc[key].push(curr);
+                        return acc;
+                      }, {} as Record<string, CantinaSchedule[]>)
+                    ).map(([eventKey, membersArray]: [string, any]) => {
+                      const splitIdx = eventKey.lastIndexOf(' - ');
+                      const eventTitle = splitIdx !== -1 ? eventKey.substring(0, splitIdx) : eventKey;
+                      const eventDate = splitIdx !== -1 ? eventKey.substring(splitIdx + 3) : new Date().toISOString().split('T')[0];
+                      let formattedDate = eventDate;
+                      try {
+                        formattedDate = format(new Date(eventDate + 'T12:00:00'), "EEEE, dd 'de' MMMM", { locale: ptBR });
+                      } catch (e) {
+                        formattedDate = eventDate;
+                      }
+                      
+                      return (
+                        <div key={eventKey} className="border border-gray-100 rounded-xl p-4 bg-gray-50/30">
+                          <div className="flex justify-between items-start border-b border-gray-100 pb-2 mb-3">
+                            <div>
+                              <h4 className="font-bold text-gray-900 text-sm">{eventTitle}</h4>
+                              <p className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">{formattedDate}</p>
+                            </div>
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-700">
+                              {membersArray.length} {membersArray.length === 1 ? 'membro' : 'membros'}
+                            </span>
+                          </div>
+                          
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            {membersArray.map((m) => (
+                              <div key={m.id} className="bg-white border border-gray-100 rounded-lg p-3 flex justify-between items-center shadow-sm">
+                                <div>
+                                  <p className="font-semibold text-gray-900 text-xs">{m.member_name}</p>
+                                  <div className="flex items-center gap-1.5 mt-1">
+                                    <span className="text-[9px] px-1.5 py-0.2 rounded font-bold uppercase tracking-wider bg-orange-100 text-orange-800">
+                                      {m.role}
+                                    </span>
+                                    <span className="text-[9px] px-1.5 py-0.2 rounded font-bold uppercase tracking-wider bg-slate-100 text-slate-800">
+                                      {m.shift}
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="flex gap-1">
+                                  <button 
+                                    onClick={() => {
+                                      setEditingSchedule(m);
+                                      setIsScheduleModalOpen(true);
+                                    }}
+                                    className="p-1 text-slate-400 hover:text-blue-600 rounded hover:bg-slate-50"
+                                  >
+                                    <Pencil size={12} />
+                                  </button>
+                                  <button 
+                                    onClick={() => handleDeleteSchedule(m.id)}
+                                    className="p-1 text-slate-400 hover:text-red-600 rounded hover:bg-slate-50"
+                                  >
+                                    <Trash2 size={12} />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
+                  <Users size={18} className="text-blue-600" />
+                  Membros Disponíveis
+                </h3>
+                <p className="text-xs text-gray-500 mb-4">
+                  Selecione os voluntários para a cozinha, caixa e logística de apoio.
+                </p>
+                <div className="max-h-[300px] overflow-y-auto space-y-2 pr-1">
+                  {scoutMembersList.length === 0 ? (
+                    <div className="text-xs text-gray-400 py-4 text-center">Nenhum membro carregado. Digite manualmente na escala.</div>
+                  ) : (
+                    scoutMembersList.map((scout) => (
+                      <div key={scout.id} className="flex items-center justify-between p-2.5 border border-gray-50 rounded-lg hover:bg-gray-50/50">
+                        <span className="text-xs font-medium text-gray-900">{scout.name}</span>
+                        <button
+                          onClick={() => {
+                            setEditingSchedule(null);
+                            setNewSchedule({
+                              date: new Date().toISOString().split('T')[0],
+                              event_name: 'Atividade de Sábado',
+                              member_name: scout.name,
+                              role: 'Cozinha',
+                              shift: 'Integral'
+                            });
+                            setIsScheduleModalOpen(true);
+                          }}
+                          className="text-[10px] font-bold text-blue-600 hover:underline"
+                        >
+                          Escalar
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Production Modal */}
       {isProductionModalOpen && selectedRecipe && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -2269,6 +2935,324 @@ const Cantina: React.FC = () => {
                   className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium"
                 >
                   Salvar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Supplier Modal (Create/Edit) */}
+      {isSupplierModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8 animate-in fade-in duration-200">
+            <h2 className="text-xl font-bold mb-6">{editingSupplier ? 'Editar Fornecedor' : 'Cadastrar Novo Fornecedor'}</h2>
+            <form onSubmit={handleAddSupplier} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nome da Empresa / Fornecedor</label>
+                <input 
+                  required
+                  type="text"
+                  placeholder="Ex: TC Carnes, HS Bebidas..."
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  value={editingSupplier ? editingSupplier.name : newSupplier.name}
+                  onChange={(e) => {
+                    if (editingSupplier) {
+                      setEditingSupplier({ ...editingSupplier, name: e.target.value });
+                    } else {
+                      setNewSupplier({ ...newSupplier, name: e.target.value });
+                    }
+                  }}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Categoria / Segmento</label>
+                <select 
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  value={editingSupplier ? editingSupplier.category : newSupplier.category}
+                  onChange={(e) => {
+                    if (editingSupplier) {
+                      setEditingSupplier({ ...editingSupplier, category: e.target.value });
+                    } else {
+                      setNewSupplier({ ...newSupplier, category: e.target.value });
+                    }
+                  }}
+                >
+                  <option value="Carnes">Carnes</option>
+                  <option value="Bebidas">Bebidas</option>
+                  <option value="Hortifruti">Hortifruti</option>
+                  <option value="Distribuidora">Distribuidora</option>
+                  <option value="Carvão">Carvão</option>
+                  <option value="Padaria">Padaria</option>
+                  <option value="Chocolates">Chocolates</option>
+                  <option value="Papelaria / Escritório">Papelaria / Escritório</option>
+                  <option value="Festas e Fantasias">Festas e Fantasias</option>
+                  <option value="Tecidos e Enxovais">Tecidos e Enxovais</option>
+                  <option value="Combustível / Conveniência">Combustível / Conveniência</option>
+                  <option value="Supermercado">Supermercado</option>
+                  <option value="Importados">Importados</option>
+                  <option value="Churrasco">Churrasco</option>
+                  <option value="Geral">Geral</option>
+                </select>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Telefone de Contato</label>
+                  <input 
+                    type="text"
+                    placeholder="Ex: (11) 99999-9999"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    value={editingSupplier ? (editingSupplier.phone || '') : newSupplier.phone}
+                    onChange={(e) => {
+                      if (editingSupplier) {
+                        setEditingSupplier({ ...editingSupplier, phone: e.target.value });
+                      } else {
+                        setNewSupplier({ ...newSupplier, phone: e.target.value });
+                      }
+                    }}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">E-mail</label>
+                  <input 
+                    type="email"
+                    placeholder="Ex: contato@fornecedor.com"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    value={editingSupplier ? (editingSupplier.email || '') : newSupplier.email}
+                    onChange={(e) => {
+                      if (editingSupplier) {
+                        setEditingSupplier({ ...editingSupplier, email: e.target.value });
+                      } else {
+                        setNewSupplier({ ...newSupplier, email: e.target.value });
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setIsSupplierModalOpen(false);
+                    setEditingSupplier(null);
+                  }}
+                  className="flex-1 py-2 border border-gray-200 rounded-lg text-sm font-medium hover:bg-gray-50"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="submit"
+                  className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 shadow-sm"
+                >
+                  {editingSupplier ? 'Salvar Alterações' : 'Adicionar Fornecedor'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Schedule Modal (Create/Edit) */}
+      {isScheduleModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8 animate-in fade-in duration-200">
+            <h2 className="text-xl font-bold mb-6">{editingSchedule ? 'Editar Escala' : 'Escalar Membro da Equipe'}</h2>
+            <form onSubmit={handleAddSchedule} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Data do Serviço / Evento</label>
+                <input 
+                  required
+                  type="date"
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  value={editingSchedule ? editingSchedule.date : newSchedule.date}
+                  onChange={(e) => {
+                    if (editingSchedule) {
+                      setEditingSchedule({ ...editingSchedule, date: e.target.value });
+                    } else {
+                      setNewSchedule({ ...newSchedule, date: e.target.value });
+                    }
+                  }}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nome da Atividade ou Evento</label>
+                <input 
+                  required
+                  type="text"
+                  placeholder="Ex: Atividade de Sábado, Bazar, Jantar..."
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  value={editingSchedule ? editingSchedule.event_name : newSchedule.event_name}
+                  onChange={(e) => {
+                    if (editingSchedule) {
+                      setEditingSchedule({ ...editingSchedule, event_name: e.target.value });
+                    } else {
+                      setNewSchedule({ ...newSchedule, event_name: e.target.value });
+                    }
+                  }}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Selecione o Membro Voluntário</label>
+                {scoutMembersList.length > 0 ? (
+                  <select 
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    value={editingSchedule ? editingSchedule.member_name : newSchedule.member_name}
+                    onChange={(e) => {
+                      if (editingSchedule) {
+                        setEditingSchedule({ ...editingSchedule, member_name: e.target.value });
+                      } else {
+                        setNewSchedule({ ...newSchedule, member_name: e.target.value });
+                      }
+                    }}
+                  >
+                    <option value="">-- Selecione um Membro --</option>
+                    {scoutMembersList.map(scout => (
+                      <option key={scout.id} value={scout.name}>{scout.name}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input 
+                    required
+                    type="text"
+                    placeholder="Nome do Membro Voluntário"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    value={editingSchedule ? editingSchedule.member_name : newSchedule.member_name}
+                    onChange={(e) => {
+                      if (editingSchedule) {
+                        setEditingSchedule({ ...editingSchedule, member_name: e.target.value });
+                      } else {
+                        setNewSchedule({ ...newSchedule, member_name: e.target.value });
+                      }
+                    }}
+                  />
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Função / Função Principal</label>
+                  <select 
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    value={editingSchedule ? editingSchedule.role : newSchedule.role}
+                    onChange={(e) => {
+                      if (editingSchedule) {
+                        setEditingSchedule({ ...editingSchedule, role: e.target.value });
+                      } else {
+                        setNewSchedule({ ...newSchedule, role: e.target.value });
+                      }
+                    }}
+                  >
+                    <option value="Cozinha">Cozinha</option>
+                    <option value="Caixa">Caixa</option>
+                    <option value="Atendimento">Atendimento</option>
+                    <option value="Logística / Apoio">Logística / Apoio</option>
+                    <option value="Limpeza">Limpeza</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Turno</label>
+                  <select 
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    value={editingSchedule ? editingSchedule.shift : newSchedule.shift}
+                    onChange={(e) => {
+                      if (editingSchedule) {
+                        setEditingSchedule({ ...editingSchedule, shift: e.target.value });
+                      } else {
+                        setNewSchedule({ ...newSchedule, shift: e.target.value });
+                      }
+                    }}
+                  >
+                    <option value="Integral">Integral</option>
+                    <option value="Manhã">Manhã</option>
+                    <option value="Tarde">Tarde</option>
+                    <option value="Noite">Noite</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setIsScheduleModalOpen(false);
+                    setEditingSchedule(null);
+                  }}
+                  className="flex-1 py-2 border border-gray-200 rounded-lg text-sm font-medium hover:bg-gray-50"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="submit"
+                  className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 shadow-sm"
+                >
+                  {editingSchedule ? 'Salvar Alterações' : 'Adicionar Escala'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Packaging Modal (Create/Edit) */}
+      {isPackagingModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8 animate-in fade-in duration-200">
+            <h2 className="text-xl font-bold mb-6">{editingPackaging ? 'Editar Embalagem' : 'Cadastrar Nova Embalagem'}</h2>
+            <form onSubmit={handleAddPackaging} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Descrição / Nome do Item</label>
+                <input 
+                  required
+                  type="text"
+                  placeholder="Ex: Copo AltaCoppo 400ml..."
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  value={editingPackaging ? editingPackaging.name : newPackaging.name}
+                  onChange={(e) => {
+                    if (editingPackaging) {
+                      setEditingPackaging({ ...editingPackaging, name: e.target.value });
+                    } else {
+                      setNewPackaging({ ...newPackaging, name: e.target.value });
+                    }
+                  }}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Quantidade em Estoque</label>
+                <input 
+                  required
+                  type="text"
+                  placeholder="Ex: 5, 12, 100..."
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm font-semibold"
+                  value={newPackagingQtyStr}
+                  onChange={(e) => {
+                    let val = e.target.value.replace(/[^0-9]/g, '');
+                    setNewPackagingQtyStr(val);
+                  }}
+                />
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setIsPackagingModalOpen(false);
+                    setEditingPackaging(null);
+                  }}
+                  className="flex-1 py-2 border border-gray-200 rounded-lg text-sm font-medium hover:bg-gray-50"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="submit"
+                  className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 shadow-sm"
+                >
+                  {editingPackaging ? 'Salvar Alterações' : 'Adicionar Item'}
                 </button>
               </div>
             </form>
