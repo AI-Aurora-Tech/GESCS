@@ -16,7 +16,11 @@ import {
   Pencil,
   Trash2,
   Minus,
-  X
+  X,
+  Gift,
+  AlertTriangle,
+  Clock,
+  Check
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { useAuth } from '../AuthContext';
@@ -106,12 +110,30 @@ const Lojinha: React.FC = () => {
   const [terminalIp, setTerminalIp] = useState(localStorage.getItem('terminal_ip') || 'localhost:1337');
   const [paymentStatus, setPaymentStatus] = useState<'idle' | 'sending' | 'waiting' | 'approved' | 'failed'>('idle');
   const [paymentError, setPaymentError] = useState('');
-  const [activePdvTab, setActivePdvTab] = useState<'venda' | 'historico'>('venda');
+  const [activePdvTab, setActivePdvTab] = useState<'venda' | 'fiados' | 'historico'>('venda');
   const [posSearchTerm, setPosSearchTerm] = useState('');
   const [pagBankSales, setPagBankSales] = useState<any[]>([]);
   const [currentTransactionRef, setCurrentTransactionRef] = useState('');
   const [pdvModalAmount, setPdvModalAmount] = useState<number>(0);
   const [activePaymentMethod, setActivePaymentMethod] = useState<'credit_card' | 'debit_card' | 'pix' | 'cash'>('credit_card');
+
+  // Doação & Fiado states
+  const [saleType, setSaleType] = useState<'normal' | 'donation' | 'fiado'>('normal');
+  const [donationYouthName, setDonationYouthName] = useState('');
+  const [fiadoChefeName, setFiadoChefeName] = useState('');
+  const [fiadoDueDate, setFiadoDueDate] = useState('');
+  const [saleApprover, setSaleApprover] = useState('');
+  const [specialSales, setSpecialSales] = useState<any[]>([]);
+
+  const APPROVERS = ['Édson', 'Sandra'];
+
+  const resetSpecialSaleFields = () => {
+    setSaleType('normal');
+    setDonationYouthName('');
+    setFiadoChefeName('');
+    setFiadoDueDate('');
+    setSaleApprover('');
+  };
 
   const fetchPagBankSales = async () => {
     try {
@@ -167,7 +189,20 @@ const Lojinha: React.FC = () => {
     try {
       const itemsText = cart.map(i => `${i.quantity}x ${i.product.name}`).join(', ');
       const totalAmount = getCartTotal();
-      
+      const currentSaleType = saleType;
+      const cartSnapshot = cart.map(i => ({
+        name: i.product.name,
+        size: i.product.size || null,
+        quantity: i.quantity,
+        price: i.product.sale_price || i.product.price || 0
+      }));
+      const txNotes =
+        currentSaleType === 'donation'
+          ? `Doação Ref: ${ref} — Jovem: ${donationYouthName} (Aprov.: ${saleApprover})`
+          : currentSaleType === 'fiado'
+          ? `Fiado Ref: ${ref} — Chefe: ${fiadoChefeName} (Aprov.: ${saleApprover}, vence ${fiadoDueDate})`
+          : `Venda PDV Ref: ${ref} (${methodStr === 'cash' ? 'Dinheiro' : 'PagBank'})`;
+
       // 1. Decrement stock for each item in DB AND check stock for Auto-Demand
       for (const item of cart) {
         const prod = item.product;
@@ -187,7 +222,8 @@ const Lojinha: React.FC = () => {
           type: 'exit',
           quantity: item.quantity,
           user_id: profile?.id,
-          notes: `Venda PDV Ref: ${ref} (${methodStr === 'cash' ? 'Dinheiro' : 'PagBank'})`
+          sale_type: currentSaleType,
+          notes: txNotes
         }]);
 
         if (currentDbStock > 0) {
@@ -259,22 +295,60 @@ const Lojinha: React.FC = () => {
         }
       }
 
-      // 2. Insert financial record
-      const fullDescription = `PDV Lojinha: ${itemsText} - Ref #${ref} (${methodStr === 'cash' ? 'Dinheiro' : 'PagBank'})`;
-      await supabase.from('financial_records').insert([{
-        type: 'income',
-        amount: totalAmount,
-        category: 'Venda Geral',
-        description: fullDescription,
-        module: 'lojinha',
-        branch: 'Grupo',
-        date: new Date().toISOString()
-      }]);
+      // 2. Registro financeiro / registro especial conforme o tipo de venda
+      if (currentSaleType === 'normal') {
+        // Venda normal: lança receita no financeiro (comportamento original)
+        const fullDescription = `PDV Lojinha: ${itemsText} - Ref #${ref} (${methodStr === 'cash' ? 'Dinheiro' : 'PagBank'})`;
+        await supabase.from('financial_records').insert([{
+          type: 'income',
+          amount: totalAmount,
+          category: 'Venda Geral',
+          description: fullDescription,
+          module: 'lojinha',
+          branch: 'Grupo',
+          date: new Date().toISOString()
+        }]);
+      } else if (currentSaleType === 'donation') {
+        // Doação: baixa no estoque SEM movimentação financeira
+        await supabase.from('lojinha_special_sales').insert([{
+          reference: ref,
+          sale_type: 'donation',
+          total_amount: totalAmount,
+          items: cartSnapshot,
+          youth_name: donationYouthName,
+          approver: saleApprover,
+          user_id: profile?.id,
+          user_name: profile?.display_name,
+          notes: `Doação para o jovem ${donationYouthName} — aprovada por ${saleApprover}. Itens: ${itemsText}`
+        }]);
+      } else if (currentSaleType === 'fiado') {
+        // Fiado: fica como "a receber"; a receita só entra ao marcar como pago
+        await supabase.from('lojinha_special_sales').insert([{
+          reference: ref,
+          sale_type: 'fiado',
+          total_amount: totalAmount,
+          items: cartSnapshot,
+          chefe_name: fiadoChefeName,
+          approver: saleApprover,
+          due_date: fiadoDueDate,
+          paid: false,
+          user_id: profile?.id,
+          user_name: profile?.display_name,
+          notes: `Fiado do chefe ${fiadoChefeName} — aprovado por ${saleApprover}. Itens: ${itemsText}`
+        }]);
+      }
 
       setPaymentStatus('approved');
       setCart([]);
+      resetSpecialSaleFields();
       fetchData();
       fetchPagBankSales();
+
+      if (currentSaleType === 'donation') {
+        alert('Doação registrada com sucesso! Os itens foram baixados do estoque, sem movimentação financeira.');
+      } else if (currentSaleType === 'fiado') {
+        alert('Venda fiada registrada! Ficará como "a receber" até ser marcada como paga na aba Fiados.');
+      }
     } catch (err: any) {
       console.error("Erro ao registrar a conclusão da venda:", err);
       setPaymentError(err.message || 'Erro ao persistir a venda.');
@@ -288,6 +362,25 @@ const Lojinha: React.FC = () => {
     const reference = `LJ-${Date.now().toString().slice(-6)}`;
     setCurrentTransactionRef(reference);
     setPaymentError('');
+
+    // Doação: baixa estoque, sem financeiro, sem maquininha
+    if (saleType === 'donation') {
+      if (!donationYouthName.trim()) { alert('Informe o nome do Jovem para registrar a doação.'); return; }
+      if (!saleApprover) { alert('Selecione o aprovador (Édson ou Sandra).'); return; }
+      setPaymentStatus('sending');
+      await completePdvSale(reference, 'none');
+      return;
+    }
+
+    // Fiado: registra "a receber", sem financeiro agora, sem maquininha
+    if (saleType === 'fiado') {
+      if (!fiadoChefeName.trim()) { alert('Informe o nome do Chefe que pegou o item.'); return; }
+      if (!fiadoDueDate) { alert('Informe a data de pagamento do fiado.'); return; }
+      if (!saleApprover) { alert('Selecione o aprovador (Édson ou Sandra).'); return; }
+      setPaymentStatus('sending');
+      await completePdvSale(reference, 'none');
+      return;
+    }
 
     if (activePaymentMethod === 'cash') {
       setPaymentStatus('sending');
@@ -354,6 +447,34 @@ const Lojinha: React.FC = () => {
     }
   };
 
+  const handleMarkFiadoPaid = async (sale: any) => {
+    if (!window.confirm(`Confirmar o recebimento do fiado de ${sale.chefe_name} no valor de R$ ${Number(sale.total_amount || 0).toFixed(2)}?`)) return;
+    try {
+      // Só agora entra a receita no financeiro
+      const { error: finError } = await supabase.from('financial_records').insert([{
+        type: 'income',
+        amount: Number(sale.total_amount || 0),
+        category: 'Venda Fiado',
+        description: `Pagamento de fiado — Chefe ${sale.chefe_name} (Ref #${sale.reference || sale.id})`,
+        module: 'lojinha',
+        branch: 'Grupo',
+        date: new Date().toISOString()
+      }]);
+      if (finError) throw finError;
+
+      const { error: updError } = await supabase
+        .from('lojinha_special_sales')
+        .update({ paid: true, paid_at: new Date().toISOString() })
+        .eq('id', sale.id);
+      if (updError) throw updError;
+
+      fetchData();
+    } catch (err: any) {
+      console.error(err);
+      alert('Erro ao registrar o pagamento do fiado: ' + (err?.message || 'Erro inesperado'));
+    }
+  };
+
   useEffect(() => {
     if (!user || authLoading) return;
 
@@ -375,10 +496,16 @@ const Lojinha: React.FC = () => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'lojinha_demands' }, () => fetchData())
       .subscribe();
 
+    const specialSalesSubscription = supabase
+      .channel('special_sales_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'lojinha_special_sales' }, () => fetchData())
+      .subscribe();
+
     return () => {
       supabase.removeChannel(productsSubscription);
       supabase.removeChannel(transactionsSubscription);
       supabase.removeChannel(demandsSubscription);
+      supabase.removeChannel(specialSalesSubscription);
     };
   }, [user, authLoading]);
 
@@ -397,6 +524,13 @@ const Lojinha: React.FC = () => {
       .select('*')
       .order('created_at', { ascending: false });
     if (dems) setDemands(dems);
+
+    // Special sales (doações e fiados). Tabela pode não existir ainda (rodar o SQL).
+    const { data: special } = await supabase
+      .from('lojinha_special_sales')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (special) setSpecialSales(special);
   };
 
   const handleAddProduct = async (e: React.FormEvent) => {
@@ -734,6 +868,14 @@ const Lojinha: React.FC = () => {
     ? allTabs.filter(t => !['cadastros', 'relatorios', 'configuracoes'].includes(t.id))
     : allTabs;
 
+  const todayStr = new Date().toISOString().split('T')[0];
+  const fiadoSales = specialSales.filter(s => s.sale_type === 'fiado');
+  const donationSales = specialSales.filter(s => s.sale_type === 'donation');
+  const overdueFiados = fiadoSales.filter(s => !s.paid && s.due_date && s.due_date < todayStr);
+  const openFiadosTotal = fiadoSales
+    .filter(s => !s.paid)
+    .reduce((acc, s) => acc + Number(s.total_amount || 0), 0);
+
   const isSaturday = new Date().getDay() === 6;
   // Simple logic: show alert every other Saturday (even weeks)
   const isStockCheckWeek = Math.floor(new Date().getDate() / 7) % 2 === 0;
@@ -790,7 +932,7 @@ const Lojinha: React.FC = () => {
           return true; // all
         });
 
-        const lastTrans = filteredTrans.filter(t => t.type === 'exit');
+        const lastTrans = filteredTrans.filter(t => t.type === 'exit' && t.sale_type !== 'donation');
         const totalRevenue = lastTrans.reduce((acc, t) => {
           const price = Number(t.products?.sale_price) || Number(t.products?.price) || 0;
           return acc + (Number(t.quantity) * price);
@@ -921,6 +1063,26 @@ const Lojinha: React.FC = () => {
       })()}
 
       <div className="space-y-6 print:hidden">
+        {overdueFiados.length > 0 && (
+          <div className="bg-red-50 border border-red-200 p-4 rounded-xl flex flex-col md:flex-row md:items-center gap-3 text-red-800">
+            <AlertTriangle className="w-6 h-6 text-red-600 flex-shrink-0" />
+            <div className="flex-1">
+              <h3 className="font-bold">Fiados vencidos ({overdueFiados.length})</h3>
+              <p className="text-sm text-red-600">
+                Há pagamentos de fiado em atraso: {overdueFiados
+                  .map(f => `${f.chefe_name} (venc. ${f.due_date ? format(new Date(f.due_date + 'T00:00:00'), 'dd/MM/yyyy') : '-'})`)
+                  .join(', ')}.
+              </p>
+            </div>
+            <button
+              onClick={() => { setActiveTab('pagvendas'); setActivePdvTab('fiados'); }}
+              className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-bold hover:bg-red-700 whitespace-nowrap self-start md:self-auto"
+            >
+              Ver fiados
+            </button>
+          </div>
+        )}
+
         {showStockCheckAlert && (
           <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl flex items-center text-blue-800">
             <BarcodeIcon className="w-6 h-6 mr-3 text-blue-600" />
@@ -1366,7 +1528,7 @@ const Lojinha: React.FC = () => {
       {activeTab === 'pagvendas' && (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
           {/* Sub Tab Selection */}
-          <div className="flex bg-gray-100 p-1 rounded-lg self-start max-w-md">
+          <div className="flex bg-gray-100 p-1 rounded-lg self-start max-w-2xl">
             <button
               onClick={() => setActivePdvTab('venda')}
               className={cn(
@@ -1375,6 +1537,20 @@ const Lojinha: React.FC = () => {
               )}
             >
               <ShoppingBag size={14} /> Registrar Venda (PDV)
+            </button>
+            <button
+              onClick={() => setActivePdvTab('fiados')}
+              className={cn(
+                "flex-1 px-4 py-2 text-xs font-bold rounded-md transition-all flex items-center justify-center gap-2 relative",
+                activePdvTab === 'fiados' ? "bg-white text-amber-600 shadow-sm" : "text-gray-500 hover:text-gray-900"
+              )}
+            >
+              <Clock size={14} /> Fiados &amp; Doações
+              {overdueFiados.length > 0 && (
+                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-black rounded-full h-4 min-w-4 px-1 flex items-center justify-center">
+                  {overdueFiados.length}
+                </span>
+              )}
             </button>
             <button
               onClick={() => {
@@ -1516,58 +1692,315 @@ const Lojinha: React.FC = () => {
                       <span className="text-xl font-black text-gray-900">R$ {getCartTotal().toFixed(2)}</span>
                     </div>
 
-                    {/* Maquininha IP Configure */}
-                    <div className="bg-blue-50/30 border border-blue-100 p-3 rounded-xl space-y-1.5">
-                      <div className="flex justify-between items-center">
-                        <label className="text-[10px] font-black uppercase text-blue-700">IP da Moderninha Smart 2</label>
-                        <span className="text-[9px] text-gray-400 font-mono">PlugPag Port: 1337</span>
-                      </div>
-                      <input
-                        type="text"
-                        className="w-full px-3 py-1.5 bg-white border border-blue-200 rounded-lg text-xs"
-                        placeholder="Ex: localhost:1337 ou 192.168.1.150:1337"
-                        value={terminalIp}
-                        onChange={(e) => setTerminalIp(e.target.value)}
-                      />
-                    </div>
-
-                    {/* Payment Mode */}
+                    {/* Tipo de Venda: Normal / Doação / Fiado */}
                     <div>
-                      <span className="text-[10px] font-black uppercase text-gray-400 block mb-2">Forma de Pagamento</span>
-                      <div className="grid grid-cols-4 gap-2">
+                      <span className="text-[10px] font-black uppercase text-gray-400 block mb-2">Tipo de Venda</span>
+                      <div className="grid grid-cols-3 gap-2">
                         {[
-                          { id: 'credit_card', label: 'Crédito', sub: 'PagBank' },
-                          { id: 'debit_card', label: 'Débito', sub: 'PagBank' },
-                          { id: 'pix', label: 'Pix QR', sub: 'PagBank' },
-                          { id: 'cash', label: 'Dinheiro', sub: 'Caixa' }
-                        ].map(method => (
+                          { id: 'normal', label: 'Venda', icon: ShoppingBag, active: 'border-blue-500 bg-blue-50 text-blue-600' },
+                          { id: 'donation', label: 'Doação', icon: Gift, active: 'border-emerald-500 bg-emerald-50 text-emerald-600' },
+                          { id: 'fiado', label: 'Fiado', icon: Clock, active: 'border-amber-500 bg-amber-50 text-amber-600' }
+                        ].map(opt => (
                           <button
-                            key={method.id}
+                            key={opt.id}
                             type="button"
-                            onClick={() => setActivePaymentMethod(method.id as any)}
+                            onClick={() => setSaleType(opt.id as any)}
                             className={cn(
-                              "p-2 rounded-lg border text-center transition-all flex flex-col items-center justify-center",
-                              activePaymentMethod === method.id 
-                                ? "border-blue-500 bg-blue-50 text-blue-600 font-bold" 
-                                : "border-gray-200 hover:border-gray-300 text-gray-500"
+                              "p-2 rounded-lg border text-center transition-all flex flex-col items-center justify-center gap-1",
+                              saleType === opt.id ? `${opt.active} font-bold` : "border-gray-200 hover:border-gray-300 text-gray-500"
                             )}
                           >
-                            <span className="text-xs">{method.label}</span>
-                            <span className="text-[8px] opacity-75">{method.sub}</span>
+                            <opt.icon size={16} />
+                            <span className="text-[11px]">{opt.label}</span>
                           </button>
                         ))}
                       </div>
                     </div>
 
+                    {/* Campos de Doação */}
+                    {saleType === 'donation' && (
+                      <div className="bg-emerald-50/40 border border-emerald-100 p-3 rounded-xl space-y-3">
+                        <p className="text-[11px] text-emerald-700 font-medium">
+                          A doação baixa o item do estoque <strong>sem movimentação financeira</strong>.
+                        </p>
+                        <div>
+                          <label className="text-[10px] font-black uppercase text-emerald-700 block mb-1">Nome do Jovem</label>
+                          <input
+                            type="text"
+                            className="w-full px-3 py-2 bg-white border border-emerald-200 rounded-lg text-sm"
+                            placeholder="Nome do jovem beneficiado"
+                            value={donationYouthName}
+                            onChange={(e) => setDonationYouthName(e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-black uppercase text-emerald-700 block mb-1">Aprovado por</label>
+                          <select
+                            className="w-full px-3 py-2 bg-white border border-emerald-200 rounded-lg text-sm"
+                            value={saleApprover}
+                            onChange={(e) => setSaleApprover(e.target.value)}
+                          >
+                            <option value="">Selecione o aprovador...</option>
+                            {APPROVERS.map(a => <option key={a} value={a}>{a}</option>)}
+                          </select>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Campos de Fiado */}
+                    {saleType === 'fiado' && (
+                      <div className="bg-amber-50/40 border border-amber-100 p-3 rounded-xl space-y-3">
+                        <p className="text-[11px] text-amber-700 font-medium">
+                          O fiado fica como <strong>a receber</strong>. A receita só entra no financeiro ao marcar como pago.
+                        </p>
+                        <div>
+                          <label className="text-[10px] font-black uppercase text-amber-700 block mb-1">Nome do Chefe</label>
+                          <input
+                            type="text"
+                            className="w-full px-3 py-2 bg-white border border-amber-200 rounded-lg text-sm"
+                            placeholder="Chefe que pegou o item"
+                            value={fiadoChefeName}
+                            onChange={(e) => setFiadoChefeName(e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-black uppercase text-amber-700 block mb-1">Data de Pagamento</label>
+                          <input
+                            type="date"
+                            className="w-full px-3 py-2 bg-white border border-amber-200 rounded-lg text-sm"
+                            value={fiadoDueDate}
+                            onChange={(e) => setFiadoDueDate(e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-black uppercase text-amber-700 block mb-1">Aprovado por</label>
+                          <select
+                            className="w-full px-3 py-2 bg-white border border-amber-200 rounded-lg text-sm"
+                            value={saleApprover}
+                            onChange={(e) => setSaleApprover(e.target.value)}
+                          >
+                            <option value="">Selecione o aprovador...</option>
+                            {APPROVERS.map(a => <option key={a} value={a}>{a}</option>)}
+                          </select>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Maquininha + Forma de Pagamento (apenas venda normal) */}
+                    {saleType === 'normal' && (
+                      <>
+                        <div className="bg-blue-50/30 border border-blue-100 p-3 rounded-xl space-y-1.5">
+                          <div className="flex justify-between items-center">
+                            <label className="text-[10px] font-black uppercase text-blue-700">IP da Moderninha Smart 2</label>
+                            <span className="text-[9px] text-gray-400 font-mono">PlugPag Port: 1337</span>
+                          </div>
+                          <input
+                            type="text"
+                            className="w-full px-3 py-1.5 bg-white border border-blue-200 rounded-lg text-xs"
+                            placeholder="Ex: localhost:1337 ou 192.168.1.150:1337"
+                            value={terminalIp}
+                            onChange={(e) => setTerminalIp(e.target.value)}
+                          />
+                        </div>
+
+                        <div>
+                          <span className="text-[10px] font-black uppercase text-gray-400 block mb-2">Forma de Pagamento</span>
+                          <div className="grid grid-cols-4 gap-2">
+                            {[
+                              { id: 'credit_card', label: 'Crédito', sub: 'PagBank' },
+                              { id: 'debit_card', label: 'Débito', sub: 'PagBank' },
+                              { id: 'pix', label: 'Pix QR', sub: 'PagBank' },
+                              { id: 'cash', label: 'Dinheiro', sub: 'Caixa' }
+                            ].map(method => (
+                              <button
+                                key={method.id}
+                                type="button"
+                                onClick={() => setActivePaymentMethod(method.id as any)}
+                                className={cn(
+                                  "p-2 rounded-lg border text-center transition-all flex flex-col items-center justify-center",
+                                  activePaymentMethod === method.id
+                                    ? "border-blue-500 bg-blue-50 text-blue-600 font-bold"
+                                    : "border-gray-200 hover:border-gray-300 text-gray-500"
+                                )}
+                              >
+                                <span className="text-xs">{method.label}</span>
+                                <span className="text-[8px] opacity-75">{method.sub}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </>
+                    )}
+
                     {/* Checkout CTA */}
                     <button
                       onClick={handlePdvCheckout}
-                      className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-200 flex items-center justify-center gap-2"
+                      className={cn(
+                        "w-full py-3 text-white rounded-xl font-bold transition-all shadow-lg flex items-center justify-center gap-2",
+                        saleType === 'donation' ? "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200" :
+                        saleType === 'fiado' ? "bg-amber-600 hover:bg-amber-700 shadow-amber-200" :
+                        "bg-blue-600 hover:bg-blue-700 shadow-blue-200"
+                      )}
                     >
-                      <CreditCard size={18} /> Confirmar Venda (R$ {getCartTotal().toFixed(2)})
+                      {saleType === 'donation' ? (
+                        <><Gift size={18} /> Registrar Doação</>
+                      ) : saleType === 'fiado' ? (
+                        <><Clock size={18} /> Registrar Fiado (R$ {getCartTotal().toFixed(2)})</>
+                      ) : (
+                        <><CreditCard size={18} /> Confirmar Venda (R$ {getCartTotal().toFixed(2)})</>
+                      )}
                     </button>
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {activePdvTab === 'fiados' && (
+            <div className="space-y-6">
+              {/* Resumo */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
+                  <p className="text-[10px] font-black text-amber-500 uppercase">Fiados em aberto</p>
+                  <p className="text-2xl font-black text-gray-900 mt-1">
+                    R$ {openFiadosTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </p>
+                  <p className="text-[11px] text-gray-400 mt-1">{fiadoSales.filter(s => !s.paid).length} pendente(s)</p>
+                </div>
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 bg-red-50/20">
+                  <p className="text-[10px] font-black text-red-500 uppercase">Fiados vencidos</p>
+                  <p className="text-2xl font-black text-red-700 mt-1">{overdueFiados.length}</p>
+                  <p className="text-[11px] text-gray-400 mt-1">Pagamento em atraso</p>
+                </div>
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 bg-emerald-50/20">
+                  <p className="text-[10px] font-black text-emerald-600 uppercase">Doações</p>
+                  <p className="text-2xl font-black text-emerald-700 mt-1">{donationSales.length}</p>
+                  <p className="text-[11px] text-gray-400 mt-1">Itens doados (sem financeiro)</p>
+                </div>
+              </div>
+
+              {/* Fiados */}
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                <div className="p-6 border-b border-gray-100">
+                  <h3 className="text-lg font-bold flex items-center gap-2"><Clock size={18} className="text-amber-500" /> Fiados</h3>
+                  <p className="text-xs text-gray-500">Produtos retirados por chefes para pagamento futuro.</p>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left min-w-[820px]">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Data</th>
+                        <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Chefe</th>
+                        <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Aprovador</th>
+                        <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Vencimento</th>
+                        <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Valor</th>
+                        <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider text-center">Status</th>
+                        <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Ação</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {fiadoSales.map((sale) => {
+                        const isOverdue = !sale.paid && sale.due_date && sale.due_date < todayStr;
+                        return (
+                          <tr key={sale.id} className={cn("hover:bg-gray-50", isOverdue && "bg-red-50/40")}>
+                            <td className="px-6 py-4 text-xs text-gray-500 whitespace-nowrap">
+                              {sale.created_at ? format(new Date(sale.created_at), 'dd/MM/yyyy') : '-'}
+                            </td>
+                            <td className="px-6 py-4">
+                              <p className="text-sm font-bold text-gray-900">{sale.chefe_name || '-'}</p>
+                              <p className="text-[11px] text-gray-400">Ref #{sale.reference || '-'}</p>
+                            </td>
+                            <td className="px-6 py-4 text-xs text-gray-600">{sale.approver || '-'}</td>
+                            <td className={cn("px-6 py-4 text-xs font-semibold", isOverdue ? "text-red-600" : "text-gray-600")}>
+                              {sale.due_date ? format(new Date(sale.due_date + 'T00:00:00'), 'dd/MM/yyyy') : '-'}
+                            </td>
+                            <td className="px-6 py-4 text-right text-sm font-black text-gray-900">
+                              R$ {Number(sale.total_amount || 0).toFixed(2)}
+                            </td>
+                            <td className="px-6 py-4 text-center">
+                              {sale.paid ? (
+                                <span className="px-2.5 py-1 bg-green-100 text-green-700 rounded-full text-[10px] font-black uppercase">Pago</span>
+                              ) : isOverdue ? (
+                                <span className="px-2.5 py-1 bg-red-100 text-red-700 rounded-full text-[10px] font-black uppercase">Vencido</span>
+                              ) : (
+                                <span className="px-2.5 py-1 bg-amber-100 text-amber-700 rounded-full text-[10px] font-black uppercase">Em aberto</span>
+                              )}
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              {!sale.paid && (
+                                <button
+                                  onClick={() => handleMarkFiadoPaid(sale)}
+                                  className="px-3 py-1.5 bg-green-600 text-white hover:bg-green-700 rounded-lg text-[11px] font-bold inline-flex items-center gap-1.5"
+                                >
+                                  <Check size={13} /> Marcar como pago
+                                </button>
+                              )}
+                              {sale.paid && sale.paid_at && (
+                                <span className="text-[11px] text-gray-400">
+                                  em {format(new Date(sale.paid_at), 'dd/MM/yyyy')}
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {fiadoSales.length === 0 && (
+                        <tr>
+                          <td colSpan={7} className="px-6 py-12 text-center text-gray-400">
+                            Nenhum fiado registrado.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Doações */}
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                <div className="p-6 border-b border-gray-100">
+                  <h3 className="text-lg font-bold flex items-center gap-2"><Gift size={18} className="text-emerald-500" /> Doações</h3>
+                  <p className="text-xs text-gray-500">Itens doados a jovens. Baixam do estoque sem movimentação financeira.</p>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left min-w-[720px]">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Data</th>
+                        <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Jovem</th>
+                        <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Aprovador</th>
+                        <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Itens</th>
+                        <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Valor de referência</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {donationSales.map((sale) => (
+                        <tr key={sale.id} className="hover:bg-gray-50">
+                          <td className="px-6 py-4 text-xs text-gray-500 whitespace-nowrap">
+                            {sale.created_at ? format(new Date(sale.created_at), 'dd/MM/yyyy') : '-'}
+                          </td>
+                          <td className="px-6 py-4 text-sm font-bold text-gray-900">{sale.youth_name || '-'}</td>
+                          <td className="px-6 py-4 text-xs text-gray-600">{sale.approver || '-'}</td>
+                          <td className="px-6 py-4 text-xs text-gray-600">
+                            {Array.isArray(sale.items)
+                              ? sale.items.map((i: any) => `${i.quantity}x ${i.name}${i.size ? ` (${i.size})` : ''}`).join(', ')
+                              : '-'}
+                          </td>
+                          <td className="px-6 py-4 text-right text-sm font-semibold text-gray-400">
+                            R$ {Number(sale.total_amount || 0).toFixed(2)}
+                          </td>
+                        </tr>
+                      ))}
+                      {donationSales.length === 0 && (
+                        <tr>
+                          <td colSpan={5} className="px-6 py-12 text-center text-gray-400">
+                            Nenhuma doação registrada.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )}
@@ -1758,6 +2191,12 @@ const Lojinha: React.FC = () => {
                         )}>
                           {isEntry ? 'Entrada' : 'Saída'}
                         </span>
+                        {t.sale_type === 'donation' && (
+                          <span className="ml-1 px-2 py-1 rounded-full text-[10px] font-bold uppercase bg-emerald-100 text-emerald-600">Doação</span>
+                        )}
+                        {t.sale_type === 'fiado' && (
+                          <span className="ml-1 px-2 py-1 rounded-full text-[10px] font-bold uppercase bg-amber-100 text-amber-600">Fiado</span>
+                        )}
                       </td>
                       <td className="px-6 py-4 font-bold">
                         {t.quantity}
@@ -1796,7 +2235,7 @@ const Lojinha: React.FC = () => {
           return true; // all
         });
 
-        const lastTrans = filteredTrans.filter(t => t.type === 'exit');
+        const lastTrans = filteredTrans.filter(t => t.type === 'exit' && t.sale_type !== 'donation');
         const totalRevenue = lastTrans.reduce((acc, t) => {
           const price = Number(t.products?.sale_price) || Number(t.products?.price) || 0;
           return acc + (Number(t.quantity) * price);
