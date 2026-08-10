@@ -507,6 +507,16 @@ const Lojinha: React.FC = () => {
         const currentStock = Number(p.stock) || 0;
         const diff = physical - currentStock;
 
+        // Grava a movimentação primeiro; se falhar, não altera o estoque desse item
+        const { error: txErr } = await supabase.from('stock_transactions').insert([{
+          product_id: p.id,
+          type: diff > 0 ? 'entry' : 'exit',
+          quantity: Math.abs(diff),
+          user_id: profile?.id,
+          notes: `Ajuste por conferência de estoque (sistema: ${currentStock} → físico: ${physical})`
+        }]);
+        if (txErr) throw txErr;
+
         const { data: updated, error: updErr } = await supabase
           .from('products')
           .update({ stock: physical })
@@ -516,14 +526,6 @@ const Lojinha: React.FC = () => {
         if (!updated || updated.length === 0) {
           throw new Error('Não foi possível ajustar o estoque (0 linhas). Verifique as permissões (RLS) de UPDATE em "products".');
         }
-
-        await supabase.from('stock_transactions').insert([{
-          product_id: p.id,
-          type: diff > 0 ? 'entry' : 'exit',
-          quantity: Math.abs(diff),
-          user_id: profile?.id,
-          notes: `Ajuste por conferência de estoque (sistema: ${currentStock} → físico: ${physical})`
-        }]);
       }
 
       await supabase.from('lojinha_stock_checks').insert([{
@@ -907,6 +909,19 @@ const Lojinha: React.FC = () => {
       const currentStock = Number(dbProd?.stock) || 0;
       const newStock = stockAction === 'entry' ? currentStock + qty : currentStock - qty;
 
+      // IMPORTANTE: grava a MOVIMENTAÇÃO primeiro. Se falhar (ex.: CHECK/ RLS),
+      // interrompe ANTES de alterar o estoque — evita estoque mudar sem registro.
+      const { error: transError } = await supabase
+        .from('stock_transactions')
+        .insert([{
+          product_id: selectedProduct.id,
+          type: stockAction,
+          quantity: qty,
+          user_id: profile?.id,
+          notes: `Ajuste manual de estoque (${stockAction === 'entry' ? 'entrada' : 'saída'})`
+        }]);
+      if (transError) throw transError;
+
       // Atualiza e confirma que a linha foi realmente alterada (detecta bloqueio de RLS)
       const { data: updated, error: updateError } = await supabase
         .from('products')
@@ -918,18 +933,6 @@ const Lojinha: React.FC = () => {
       if (!updated || updated.length === 0) {
         throw new Error('A atualização não foi aplicada (0 linhas). Verifique as permissões de banco (RLS) de UPDATE na tabela "products".');
       }
-
-      const { error: transError } = await supabase
-        .from('stock_transactions')
-        .insert([{
-          product_id: selectedProduct.id,
-          type: stockAction,
-          quantity: qty,
-          user_id: profile?.id,
-          notes: `Ajuste manual de estoque (${stockAction === 'entry' ? 'entrada' : 'saída'})`
-        }]);
-
-      if (transError) throw transError;
 
       // Demanda automática: se o estoque ficar <= mínimo, cria demanda de reposição
       if (stockAction === 'exit' && newStock <= (Number(selectedProduct.min_stock) || 0)) {
