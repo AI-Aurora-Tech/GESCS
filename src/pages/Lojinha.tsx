@@ -371,21 +371,19 @@ const Lojinha: React.FC = () => {
     setCurrentTransactionRef(reference);
     setPaymentError('');
 
-    // Doação: baixa estoque, sem financeiro, sem maquininha
+    // Doação: baixa estoque, sem financeiro, SEM maquininha (não abrir a telinha)
     if (saleType === 'donation') {
       if (!donationYouthName.trim()) { alert('Informe o nome do Jovem para registrar a doação.'); return; }
       if (!saleApprover) { alert('Selecione o aprovador (Édson ou Sandra).'); return; }
-      setPaymentStatus('sending');
       await completePdvSale(reference, 'none');
       return;
     }
 
-    // Fiado: registra "a receber", sem financeiro agora, sem maquininha
+    // Fiado: registra "a receber", sem financeiro agora, SEM maquininha
     if (saleType === 'fiado') {
       if (!fiadoChefeName.trim()) { alert('Informe o nome do Chefe que pegou o item.'); return; }
       if (!fiadoDueDate) { alert('Informe a data de pagamento do fiado.'); return; }
       if (!saleApprover) { alert('Selecione o aprovador (Édson ou Sandra).'); return; }
-      setPaymentStatus('sending');
       await completePdvSale(reference, 'none');
       return;
     }
@@ -2259,7 +2257,7 @@ const Lojinha: React.FC = () => {
           )}
 
           {/* Payment Terminal Emulator / Modal Overlay */}
-          {paymentStatus !== 'idle' && paymentStatus !== 'approved' && (
+          {saleType === 'normal' && paymentStatus !== 'idle' && paymentStatus !== 'approved' && (
             <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
               <div className="bg-white rounded-3xl shadow-2xl border border-gray-100 p-8 max-w-sm w-full text-center relative overflow-hidden">
                 {/* Simulated Moderninha Terminal Display */}

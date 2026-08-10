@@ -70,7 +70,7 @@ const DEFAULT_EVENTS: ScoutEvent[] = [
 
 const Agenda: React.FC = () => {
   const { profile } = useAuth();
-  const [currentDate, setCurrentDate] = useState<Date>(new Date(2026, 5, 25)); // Set June 2026 based on mock local time
+  const [currentDate, setCurrentDate] = useState<Date>(new Date()); // Mês atual real do sistema
   const [events, setEvents] = useState<ScoutEvent[]>([]);
   const [selectedBranch, setSelectedBranch] = useState<string>('all');
   const [showHolidays, setShowHolidays] = useState<boolean>(true);
@@ -81,7 +81,7 @@ const Agenda: React.FC = () => {
   const [newEvent, setNewEvent] = useState({
     title: '',
     description: '',
-    date: '2026-06-25',
+    date: format(new Date(), 'yyyy-MM-dd'),
     branch: 'Grupo Geral' as ScoutEvent['branch']
   });
 
@@ -305,7 +305,7 @@ const Agenda: React.FC = () => {
             {/* Actual day cells */}
             {daysInMonth.map((day) => {
               const dateStr = format(day, 'yyyy-MM-dd');
-              const isToday = isSameDay(day, new Date(2026, 5, 25)); // Mock today check
+              const isToday = isSameDay(day, new Date()); // Dia de hoje real
               
               // Filter events for this day
               const dayEvents = filteredEvents.filter(ev => ev.date === dateStr);
