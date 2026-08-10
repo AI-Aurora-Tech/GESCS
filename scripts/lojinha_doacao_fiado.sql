@@ -9,6 +9,15 @@
 ALTER TABLE public.stock_transactions
   ADD COLUMN IF NOT EXISTS sale_type text NOT NULL DEFAULT 'normal';
 
+-- 1.1) CORREÇÃO CRÍTICA: o CHECK da coluna "type" rejeitava 'entry'/'exit'
+--      (usados pelo app), fazendo TODA venda/ajuste de estoque falhar ao gravar
+--      a movimentação. Recria o CHECK aceitando os quatro valores usados.
+ALTER TABLE public.stock_transactions
+  DROP CONSTRAINT IF EXISTS stock_transactions_type_check;
+ALTER TABLE public.stock_transactions
+  ADD CONSTRAINT stock_transactions_type_check
+  CHECK (type IN ('in', 'out', 'entry', 'exit'));
+
 -- 2) Tabela das vendas especiais (doações e fiados).
 --    Doação  -> sale_type='donation', youth_name (nome do jovem), approver.
 --    Fiado   -> sale_type='fiado', chefe_name, approver, due_date, paid.
