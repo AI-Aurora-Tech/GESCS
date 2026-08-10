@@ -25,7 +25,7 @@ const Logo: React.FC<LogoProps> = ({ branch = 'Grupo', className = '', size = 48
       case 'Escoteiro': return '/logos/escoteiro.png';
       case 'Senior': return '/logos/senior.png';
       case 'Pioneiro': return '/logos/pioneiro.png';
-      default: return '/logos/logo-grupo.png';
+      default: return '/logos/logo-grupo.png.jpeg';
     }
   };
 

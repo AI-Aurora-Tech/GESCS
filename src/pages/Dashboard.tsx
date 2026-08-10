@@ -31,13 +31,103 @@ const Dashboard: React.FC = () => {
     totalAssets: 0
   });
 
+  type AlertItem = { title: string; type: 'warning' | 'error' | 'info'; subtitle: string; module: string };
+  const [alerts, setAlerts] = useState<AlertItem[]>([]);
+
+  const canSeeModule = (m: string) => isGeral || role.includes(m);
+
+  const fetchAlerts = async () => {
+    const list: AlertItem[] = [];
+    try {
+      if (canSeeModule('lojinha')) {
+        // Estoque baixo
+        try {
+          const { data: prods } = await supabase.from('products').select('name, size, stock, min_stock');
+          (prods || []).forEach((p: any) => {
+            const min = Number(p.min_stock) || 5;
+            if (Number(p.stock) <= min) {
+              list.push({
+                title: `Estoque baixo: ${p.name}${p.size ? ` (${p.size})` : ''} — ${p.stock} un`,
+                type: Number(p.stock) <= 0 ? 'error' : 'warning',
+                subtitle: 'Lojinha • Estoque',
+                module: 'lojinha'
+              });
+            }
+          });
+        } catch (e) {}
+
+        // Demandas pendentes
+        try {
+          const { data: dems } = await supabase.from('lojinha_demands').select('title, status').eq('status', 'pending');
+          (dems || []).forEach((d: any) => list.push({
+            title: `Demanda pendente: ${d.title}`,
+            type: 'info',
+            subtitle: 'Lojinha • Demanda',
+            module: 'lojinha'
+          }));
+        } catch (e) {}
+
+        // Fiados vencidos
+        try {
+          const today = new Date().toISOString().split('T')[0];
+          const { data: fiados } = await supabase
+            .from('lojinha_special_sales')
+            .select('chefe_name, due_date, paid, sale_type')
+            .eq('sale_type', 'fiado')
+            .eq('paid', false);
+          (fiados || []).forEach((f: any) => {
+            if (f.due_date && f.due_date < today) {
+              list.push({
+                title: `Fiado vencido: ${f.chefe_name}`,
+                type: 'error',
+                subtitle: 'Lojinha • Fiado',
+                module: 'lojinha'
+              });
+            }
+          });
+        } catch (e) {}
+      }
+
+      if (canSeeModule('scout')) {
+        try {
+          const { count } = await supabase
+            .from('scout_members')
+            .select('*', { count: 'exact', head: true })
+            .eq('payment_status', 'overdue');
+          if (count && count > 0) {
+            list.push({ title: `Inadimplência: ${count} membro(s)`, type: 'error', subtitle: 'Escotismo • Pagamentos', module: 'scout' });
+          }
+        } catch (e) {}
+      }
+    } catch (err) {
+      console.error(err);
+    }
+    setAlerts(list);
+  };
+
   useEffect(() => {
     fetchStats();
+    fetchAlerts();
 
     const subStock = supabase
       .channel('dashboard-stock-changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'stock_transactions' }, () => {
         fetchStats();
+        fetchAlerts();
+      })
+      .subscribe();
+
+    const subProducts = supabase
+      .channel('dashboard-products-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => {
+        fetchAlerts();
+      })
+      .subscribe();
+
+    const subDemands = supabase
+      .channel('dashboard-demands-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'lojinha_demands' }, () => {
+        fetchAlerts();
       })
       .subscribe();
 
@@ -52,6 +142,7 @@ const Dashboard: React.FC = () => {
       .channel('dashboard-scout-changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'scout_members' }, () => {
         fetchStats();
+        fetchAlerts();
       })
       .subscribe();
 
@@ -64,6 +155,8 @@ const Dashboard: React.FC = () => {
 
     return () => {
       supabase.removeChannel(subStock);
+      supabase.removeChannel(subProducts);
+      supabase.removeChannel(subDemands);
       supabase.removeChannel(subFinance);
       supabase.removeChannel(subScout);
       supabase.removeChannel(subAsset);
@@ -186,25 +279,29 @@ const Dashboard: React.FC = () => {
         {/* Recent Alerts */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
           <h3 className="text-lg font-bold mb-6">Alertas e Demandas</h3>
-          <div className="space-y-4">
-            {[
-              { title: 'Estoque Baixo: Camiseta G', type: 'warning', time: '2h atrás' },
-              { title: 'Novo Ativo para Aprovação', type: 'info', time: '5h atrás' },
-              { title: 'Inadimplência: 12 Membros', type: 'error', time: '1d atrás' },
-              { title: 'Evento Cantina: Festa Junina', type: 'info', time: '2d atrás' },
-            ].map((alert, i) => (
-              <div key={i} className="flex items-start p-4 rounded-lg bg-gray-50 border border-gray-100">
-                <AlertCircle size={20} className={cn(
-                  "mt-0.5 mr-3",
-                  alert.type === 'warning' ? "text-orange-500" : 
-                  alert.type === 'error' ? "text-red-500" : "text-blue-500"
-                )} />
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-gray-900">{alert.title}</p>
-                  <p className="text-xs text-gray-500">{alert.time}</p>
-                </div>
+          <div className="space-y-4 max-h-80 overflow-y-auto pr-1">
+            {alerts.length === 0 ? (
+              <div className="p-8 text-center text-sm text-gray-400">
+                Nenhum alerta pendente no momento.
               </div>
-            ))}
+            ) : (
+              alerts.slice(0, 12).map((alert, i) => (
+                <div key={i} className="flex items-start p-4 rounded-lg bg-gray-50 border border-gray-100">
+                  <AlertCircle size={20} className={cn(
+                    "mt-0.5 mr-3 flex-shrink-0",
+                    alert.type === 'warning' ? "text-orange-500" :
+                    alert.type === 'error' ? "text-red-500" : "text-blue-500"
+                  )} />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900">{alert.title}</p>
+                    <p className="text-xs text-gray-500">{alert.subtitle}</p>
+                  </div>
+                </div>
+              ))
+            )}
+            {alerts.length > 12 && (
+              <p className="text-xs text-gray-400 text-center pt-1">+ {alerts.length - 12} outros alertas</p>
+            )}
           </div>
         </div>
       </div>

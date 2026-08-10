@@ -72,3 +72,64 @@ BEGIN
     NULL;
   END;
 END $$;
+
+
+-- ============================================================================
+-- PARTE 2 — Conferência de estoque (a cada 15 dias) + correção de permissões
+-- ============================================================================
+
+-- 5) Tabela de conferências de estoque (balanço).
+CREATE TABLE IF NOT EXISTS public.lojinha_stock_checks (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  total_items int NOT NULL DEFAULT 0,   -- qtde de produtos conferidos
+  divergences int NOT NULL DEFAULT 0,   -- qtde de produtos com divergência
+  details     jsonb,                    -- detalhes {name,size,system,physical}
+  user_id     uuid,
+  user_name   text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_lojinha_stock_checks_created
+  ON public.lojinha_stock_checks (created_at DESC);
+
+ALTER TABLE public.lojinha_stock_checks ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "stock_checks_all" ON public.lojinha_stock_checks;
+CREATE POLICY "stock_checks_all"
+  ON public.lojinha_stock_checks FOR ALL
+  USING (auth.role() = 'authenticated')
+  WITH CHECK (auth.role() = 'authenticated');
+
+DO $$
+BEGIN
+  BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.lojinha_stock_checks;
+  EXCEPTION WHEN duplicate_object THEN
+    NULL;
+  END;
+END $$;
+
+-- 6) Permissões (RLS) para ATUALIZAR estoque.
+--    Corrige o caso em que a atualização de estoque "não salva": sem uma policy
+--    de UPDATE, o Supabase aceita a chamada mas não altera nenhuma linha.
+--    Estas policies liberam CRUD para qualquer usuário autenticado (o app sempre
+--    opera logado), mantendo o comportamento atual e destravando o UPDATE.
+ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "products_authenticated_all" ON public.products;
+CREATE POLICY "products_authenticated_all"
+  ON public.products FOR ALL
+  USING (auth.role() = 'authenticated')
+  WITH CHECK (auth.role() = 'authenticated');
+
+ALTER TABLE public.stock_transactions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "stock_transactions_authenticated_all" ON public.stock_transactions;
+CREATE POLICY "stock_transactions_authenticated_all"
+  ON public.stock_transactions FOR ALL
+  USING (auth.role() = 'authenticated')
+  WITH CHECK (auth.role() = 'authenticated');
+
+ALTER TABLE public.lojinha_demands ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "lojinha_demands_authenticated_all" ON public.lojinha_demands;
+CREATE POLICY "lojinha_demands_authenticated_all"
+  ON public.lojinha_demands FOR ALL
+  USING (auth.role() = 'authenticated')
+  WITH CHECK (auth.role() = 'authenticated');

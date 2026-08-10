@@ -124,6 +124,8 @@ const Lojinha: React.FC = () => {
   const [fiadoDueDate, setFiadoDueDate] = useState('');
   const [saleApprover, setSaleApprover] = useState('');
   const [specialSales, setSpecialSales] = useState<any[]>([]);
+  const [stockChecks, setStockChecks] = useState<any[]>([]);
+  const [finalizingConference, setFinalizingConference] = useState(false);
 
   const APPROVERS = ['Édson', 'Sandra'];
 
@@ -475,6 +477,73 @@ const Lojinha: React.FC = () => {
     }
   };
 
+  const handleFinalizeConference = async () => {
+    const scannedProducts = products.filter(p => (scannedItems[p.barcode] || 0) > 0);
+    if (scannedProducts.length === 0) {
+      alert('Escaneie ao menos um produto antes de finalizar a conferência.');
+      return;
+    }
+
+    // Só ajusta os produtos escaneados cuja contagem física difere do sistema.
+    // Produtos NÃO escaneados não são zerados (evita zerar por esquecimento de leitura).
+    const adjustments = scannedProducts
+      .map(p => ({ p, physical: scannedItems[p.barcode] || 0 }))
+      .filter(x => x.physical !== (Number(x.p.stock) || 0));
+
+    const confirmMsg = adjustments.length === 0
+      ? 'Nenhuma divergência entre a contagem física e o sistema. Deseja registrar a conferência mesmo assim?'
+      : `Finalizar conferência? ${adjustments.length} produto(s) terão o estoque ajustado para a contagem física.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setFinalizingConference(true);
+    try {
+      for (const { p, physical } of adjustments) {
+        const currentStock = Number(p.stock) || 0;
+        const diff = physical - currentStock;
+
+        const { data: updated, error: updErr } = await supabase
+          .from('products')
+          .update({ stock: physical })
+          .eq('id', p.id)
+          .select('id');
+        if (updErr) throw updErr;
+        if (!updated || updated.length === 0) {
+          throw new Error('Não foi possível ajustar o estoque (0 linhas). Verifique as permissões (RLS) de UPDATE em "products".');
+        }
+
+        await supabase.from('stock_transactions').insert([{
+          product_id: p.id,
+          type: diff > 0 ? 'entry' : 'exit',
+          quantity: Math.abs(diff),
+          user_id: profile?.id,
+          notes: `Ajuste por conferência de estoque (sistema: ${currentStock} → físico: ${physical})`
+        }]);
+      }
+
+      await supabase.from('lojinha_stock_checks').insert([{
+        user_id: profile?.id,
+        user_name: profile?.display_name || 'Funcionário(a) Lojinha',
+        total_items: scannedProducts.length,
+        divergences: adjustments.length,
+        details: adjustments.map(a => ({
+          name: a.p.name,
+          size: a.p.size || null,
+          system: Number(a.p.stock) || 0,
+          physical: a.physical
+        }))
+      }]);
+
+      setScannedItems({});
+      fetchData();
+      alert(`Conferência finalizada! ${adjustments.length} ajuste(s) de estoque aplicado(s).`);
+    } catch (err: any) {
+      console.error(err);
+      alert('Erro ao finalizar a conferência: ' + (err?.message || 'Erro inesperado'));
+    } finally {
+      setFinalizingConference(false);
+    }
+  };
+
   useEffect(() => {
     if (!user || authLoading) return;
 
@@ -501,11 +570,17 @@ const Lojinha: React.FC = () => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'lojinha_special_sales' }, () => fetchData())
       .subscribe();
 
+    const stockChecksSubscription = supabase
+      .channel('stock_checks_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'lojinha_stock_checks' }, () => fetchData())
+      .subscribe();
+
     return () => {
       supabase.removeChannel(productsSubscription);
       supabase.removeChannel(transactionsSubscription);
       supabase.removeChannel(demandsSubscription);
       supabase.removeChannel(specialSalesSubscription);
+      supabase.removeChannel(stockChecksSubscription);
     };
   }, [user, authLoading]);
 
@@ -531,6 +606,13 @@ const Lojinha: React.FC = () => {
       .select('*')
       .order('created_at', { ascending: false });
     if (special) setSpecialSales(special);
+
+    // Conferências de estoque (para o alerta de 15 dias). Tabela pode não existir ainda.
+    const { data: checks } = await supabase
+      .from('lojinha_stock_checks')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (checks) setStockChecks(checks);
   };
 
   const handleAddProduct = async (e: React.FormEvent) => {
@@ -781,32 +863,47 @@ const Lojinha: React.FC = () => {
     e.preventDefault();
     if (!selectedProduct) return;
 
-    const newStock = stockAction === 'entry' 
-      ? selectedProduct.stock + quantity 
-      : selectedProduct.stock - quantity;
+    const qty = Number(quantity) || 0;
+    if (qty <= 0) { alert('Informe uma quantidade válida (maior que zero).'); return; }
 
     try {
-      const { error: updateError } = await supabase
+      // Busca o estoque mais recente do banco para não usar um valor defasado da tela
+      const { data: dbProd, error: fetchErr } = await supabase
+        .from('products')
+        .select('stock')
+        .eq('id', selectedProduct.id)
+        .single();
+      if (fetchErr) throw fetchErr;
+
+      const currentStock = Number(dbProd?.stock) || 0;
+      const newStock = stockAction === 'entry' ? currentStock + qty : currentStock - qty;
+
+      // Atualiza e confirma que a linha foi realmente alterada (detecta bloqueio de RLS)
+      const { data: updated, error: updateError } = await supabase
         .from('products')
         .update({ stock: newStock })
-        .eq('id', selectedProduct.id);
-      
+        .eq('id', selectedProduct.id)
+        .select('id, stock');
+
       if (updateError) throw updateError;
+      if (!updated || updated.length === 0) {
+        throw new Error('A atualização não foi aplicada (0 linhas). Verifique as permissões de banco (RLS) de UPDATE na tabela "products".');
+      }
 
       const { error: transError } = await supabase
         .from('stock_transactions')
         .insert([{
           product_id: selectedProduct.id,
           type: stockAction,
-          quantity,
+          quantity: qty,
           user_id: profile?.id,
-          notes: `Ajuste manual de estoque (${stockAction})`
+          notes: `Ajuste manual de estoque (${stockAction === 'entry' ? 'entrada' : 'saída'})`
         }]);
-      
+
       if (transError) throw transError;
 
-      // Automatic Demand Logic: If stock becomes negative or zero, create a demand
-      if (stockAction === 'exit' && newStock <= (selectedProduct.min_stock || 0)) {
+      // Demanda automática: se o estoque ficar <= mínimo, cria demanda de reposição
+      if (stockAction === 'exit' && newStock <= (Number(selectedProduct.min_stock) || 0)) {
         const { error: demandError } = await supabase
           .from('lojinha_demands')
           .insert([{
@@ -818,15 +915,16 @@ const Lojinha: React.FC = () => {
             user_id: profile?.id,
             user_name: 'Sistema (Automático)'
           }]);
-        
+
         if (demandError) console.error('Erro ao criar demanda automática:', demandError);
       }
 
       setIsStockModalOpen(false);
       setQuantity(1);
       fetchData();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      alert('Erro ao atualizar o estoque: ' + (err?.message || 'Erro inesperado'));
     }
   };
 
@@ -876,10 +974,12 @@ const Lojinha: React.FC = () => {
     .filter(s => !s.paid)
     .reduce((acc, s) => acc + Number(s.total_amount || 0), 0);
 
-  const isSaturday = new Date().getDay() === 6;
-  // Simple logic: show alert every other Saturday (even weeks)
-  const isStockCheckWeek = Math.floor(new Date().getDate() / 7) % 2 === 0;
-  const showStockCheckAlert = isSaturday && isStockCheckWeek;
+  // Conferência de estoque: obrigatória a cada 15 dias
+  const lastStockCheck = stockChecks[0];
+  const daysSinceCheck = lastStockCheck?.created_at
+    ? Math.floor((Date.now() - new Date(lastStockCheck.created_at).getTime()) / (1000 * 60 * 60 * 24))
+    : null;
+  const showStockCheckAlert = daysSinceCheck === null || daysSinceCheck >= 15;
 
   return (
     <>
@@ -1084,12 +1184,22 @@ const Lojinha: React.FC = () => {
         )}
 
         {showStockCheckAlert && (
-          <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl flex items-center text-blue-800">
-            <BarcodeIcon className="w-6 h-6 mr-3 text-blue-600" />
-            <div>
-              <h3 className="font-bold">Lembrete de Conferência de Estoque</h3>
-              <p className="text-sm text-blue-600">Hoje é sábado de conferência! Acesse a aba "Conferência" para realizar o balanço quinzenal.</p>
+          <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl flex flex-col md:flex-row md:items-center gap-3 text-blue-800">
+            <BarcodeIcon className="w-6 h-6 text-blue-600 flex-shrink-0" />
+            <div className="flex-1">
+              <h3 className="font-bold">Conferência de estoque pendente</h3>
+              <p className="text-sm text-blue-600">
+                {daysSinceCheck === null
+                  ? 'Nenhuma conferência registrada ainda. A conferência do estoque deve ser feita a cada 15 dias.'
+                  : `A última conferência foi há ${daysSinceCheck} dias. É necessário realizar a conferência do estoque (a cada 15 dias).`}
+              </p>
             </div>
+            <button
+              onClick={() => setActiveTab('conferencia')}
+              className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 whitespace-nowrap self-start md:self-auto"
+            >
+              Fazer conferência
+            </button>
           </div>
         )}
 
@@ -1218,18 +1328,7 @@ const Lojinha: React.FC = () => {
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex gap-2">
-                        <button 
-                          onClick={() => {
-                            setSelectedProduct(product);
-                            setRestockQuantity(0);
-                            setIsRestockModalOpen(true);
-                          }}
-                          title="Renovar Estoque"
-                          className="p-2 text-green-600 hover:bg-green-50 rounded-lg"
-                        >
-                          <Plus size={18} />
-                        </button>
-                        <button 
+                        <button
                           onClick={() => {
                             setSelectedProduct(product);
                             setNewProduct({
@@ -1383,14 +1482,60 @@ const Lojinha: React.FC = () => {
             </div>
           </div>
             
-            <div className="mt-6 flex justify-end">
-              <button 
-                onClick={() => setScannedItems({})}
-                className="px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg font-medium transition-colors"
-              >
-                Zerar Contagem
-              </button>
-            </div>
+            {(() => {
+              const scannedProds = products.filter(p => (scannedItems[p.barcode] || 0) > 0);
+              const divergent = scannedProds.filter(p => (scannedItems[p.barcode] || 0) !== (Number(p.stock) || 0));
+              const missing = scannedProds.filter(p => (scannedItems[p.barcode] || 0) < (Number(p.stock) || 0));
+              const excess = scannedProds.filter(p => (scannedItems[p.barcode] || 0) > (Number(p.stock) || 0));
+              return (
+                <div className="mt-6 space-y-4">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="p-3 rounded-xl border border-gray-100 bg-gray-50">
+                      <p className="text-[10px] font-black uppercase text-gray-400">Produtos conferidos</p>
+                      <p className="text-xl font-black text-gray-900">{scannedProds.length}</p>
+                    </div>
+                    <div className="p-3 rounded-xl border border-gray-100 bg-amber-50/40">
+                      <p className="text-[10px] font-black uppercase text-amber-500">Divergentes</p>
+                      <p className="text-xl font-black text-amber-700">{divergent.length}</p>
+                    </div>
+                    <div className="p-3 rounded-xl border border-gray-100 bg-red-50/40">
+                      <p className="text-[10px] font-black uppercase text-red-500">Faltando</p>
+                      <p className="text-xl font-black text-red-700">{missing.length}</p>
+                    </div>
+                    <div className="p-3 rounded-xl border border-gray-100 bg-green-50/40">
+                      <p className="text-[10px] font-black uppercase text-green-600">Sobrando</p>
+                      <p className="text-xl font-black text-green-700">{excess.length}</p>
+                    </div>
+                  </div>
+                  <div className="flex flex-col sm:flex-row justify-between gap-3">
+                    <p className="text-xs text-gray-400 self-center max-w-md">
+                      Produtos não escaneados ficam como "Pendente" e <strong>não são alterados</strong> ao finalizar. Ao finalizar, os produtos conferidos têm o estoque ajustado para a contagem física.
+                    </p>
+                    <div className="flex gap-2 justify-end flex-shrink-0">
+                      <button
+                        onClick={() => setScannedItems({})}
+                        className="px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg font-medium transition-colors"
+                      >
+                        Zerar Contagem
+                      </button>
+                      <button
+                        onClick={handleFinalizeConference}
+                        disabled={finalizingConference || scannedProds.length === 0}
+                        className="px-4 py-2 bg-green-600 text-white rounded-lg font-bold hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
+                      >
+                        <Check size={16} /> {finalizingConference ? 'Finalizando...' : 'Finalizar e Corrigir Estoque'}
+                      </button>
+                    </div>
+                  </div>
+                  {lastStockCheck?.created_at && (
+                    <p className="text-[11px] text-gray-400">
+                      Última conferência: {format(new Date(lastStockCheck.created_at), 'dd/MM/yyyy HH:mm')}
+                      {lastStockCheck.user_name ? ` por ${lastStockCheck.user_name}` : ''}.
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}
