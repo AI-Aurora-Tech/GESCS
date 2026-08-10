@@ -133,3 +133,98 @@ CREATE POLICY "lojinha_demands_authenticated_all"
   ON public.lojinha_demands FOR ALL
   USING (auth.role() = 'authenticated')
   WITH CHECK (auth.role() = 'authenticated');
+
+
+-- ============================================================================
+-- PARTE 3 — Permissões (RLS) para as demais tabelas do sistema
+--   CAUSA RAIZ do "nada salva no banco": tabelas com RLS ligado mas sem policy
+--   de INSERT/UPDATE. O supabase-js NÃO lança erro nesse caso — a escrita
+--   simplesmente não acontece. As policies abaixo liberam CRUD para usuários
+--   autenticados (o app sempre opera logado).
+--   Rode este bloco por inteiro; é idempotente.
+-- ============================================================================
+
+-- financial_records (receitas/despesas — vendas, pagamentos, etc.)
+ALTER TABLE public.financial_records ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "financial_records_authenticated_all" ON public.financial_records;
+CREATE POLICY "financial_records_authenticated_all"
+  ON public.financial_records FOR ALL
+  USING (auth.role() = 'authenticated')
+  WITH CHECK (auth.role() = 'authenticated');
+
+-- scout_members (membros/escoteiros)
+ALTER TABLE public.scout_members ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "scout_members_authenticated_all" ON public.scout_members;
+CREATE POLICY "scout_members_authenticated_all"
+  ON public.scout_members FOR ALL
+  USING (auth.role() = 'authenticated')
+  WITH CHECK (auth.role() = 'authenticated');
+
+-- scout_events (agenda) — cria a tabela se não existir
+CREATE TABLE IF NOT EXISTS public.scout_events (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  title       text NOT NULL,
+  description text,
+  date        date NOT NULL,
+  branch      text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE public.scout_events ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "scout_events_authenticated_all" ON public.scout_events;
+CREATE POLICY "scout_events_authenticated_all"
+  ON public.scout_events FOR ALL
+  USING (auth.role() = 'authenticated')
+  WITH CHECK (auth.role() = 'authenticated');
+
+-- assets (patrimônio / ativos) — só cria policy se a tabela existir
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables
+             WHERE table_schema = 'public' AND table_name = 'assets') THEN
+    EXECUTE 'ALTER TABLE public.assets ENABLE ROW LEVEL SECURITY';
+    EXECUTE 'DROP POLICY IF EXISTS "assets_authenticated_all" ON public.assets';
+    EXECUTE 'CREATE POLICY "assets_authenticated_all" ON public.assets FOR ALL
+             USING (auth.role() = ''authenticated'') WITH CHECK (auth.role() = ''authenticated'')';
+  END IF;
+END $$;
+
+-- profiles (usuários) — leitura por autenticados + criação/edição
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "profiles_authenticated_select" ON public.profiles;
+CREATE POLICY "profiles_authenticated_select"
+  ON public.profiles FOR SELECT
+  USING (auth.role() = 'authenticated');
+DROP POLICY IF EXISTS "profiles_authenticated_insert" ON public.profiles;
+CREATE POLICY "profiles_authenticated_insert"
+  ON public.profiles FOR INSERT
+  WITH CHECK (auth.role() = 'authenticated');
+DROP POLICY IF EXISTS "profiles_authenticated_update" ON public.profiles;
+CREATE POLICY "profiles_authenticated_update"
+  ON public.profiles FOR UPDATE
+  USING (auth.role() = 'authenticated');
+
+-- Habilita realtime para as tabelas principais (ignora se já estiverem)
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+    'products','stock_transactions','lojinha_demands','financial_records',
+    'scout_members','scout_events'
+  ] LOOP
+    BEGIN
+      EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I', t);
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    WHEN undefined_table THEN NULL;
+    END;
+  END LOOP;
+END $$;
+
+-- ============================================================================
+-- DIAGNÓSTICO (opcional): rode para ver o status de RLS e nº de policies.
+--   Se alguma tabela tiver rls_ativo = true e policies = 0, as escritas falham.
+-- ============================================================================
+-- SELECT c.relname AS tabela, c.relrowsecurity AS rls_ativo,
+--        (SELECT count(*) FROM pg_policies p WHERE p.tablename = c.relname) AS policies
+-- FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+-- WHERE n.nspname = 'public' AND c.relkind = 'r'
+-- ORDER BY tabela;

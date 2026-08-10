@@ -28,6 +28,7 @@ import Barcode from 'react-barcode';
 import { cn } from '../lib/utils';
 import { format } from 'date-fns';
 import Logo from '../components/Logo';
+import Users from './Users';
 import { 
   BarChart, 
   Bar, 
@@ -110,7 +111,7 @@ const Lojinha: React.FC = () => {
   const [terminalIp, setTerminalIp] = useState(localStorage.getItem('terminal_ip') || 'localhost:1337');
   const [paymentStatus, setPaymentStatus] = useState<'idle' | 'sending' | 'waiting' | 'approved' | 'failed'>('idle');
   const [paymentError, setPaymentError] = useState('');
-  const [activePdvTab, setActivePdvTab] = useState<'venda' | 'fiados' | 'historico'>('venda');
+  const [activePdvTab, setActivePdvTab] = useState<'venda' | 'fiados' | 'movimentacao' | 'historico'>('venda');
   const [posSearchTerm, setPosSearchTerm] = useState('');
   const [pagBankSales, setPagBankSales] = useState<any[]>([]);
   const [currentTransactionRef, setCurrentTransactionRef] = useState('');
@@ -219,7 +220,7 @@ const Lojinha: React.FC = () => {
         const currentDbStock = dbProd ? dbProd.stock : prod.stock;
 
         // Record stock transaction log (ALWAYS record sale event for dashboard, reports, and movements)
-        await supabase.from('stock_transactions').insert([{
+        const { error: txError } = await supabase.from('stock_transactions').insert([{
           product_id: prod.id,
           type: 'exit',
           quantity: item.quantity,
@@ -227,6 +228,7 @@ const Lojinha: React.FC = () => {
           sale_type: currentSaleType,
           notes: txNotes
         }]);
+        if (txError) throw txError;
 
         if (currentDbStock > 0) {
           const newStock = Math.max(0, currentDbStock - item.quantity);
@@ -301,7 +303,7 @@ const Lojinha: React.FC = () => {
       if (currentSaleType === 'normal') {
         // Venda normal: lança receita no financeiro (comportamento original)
         const fullDescription = `PDV Lojinha: ${itemsText} - Ref #${ref} (${methodStr === 'cash' ? 'Dinheiro' : 'PagBank'})`;
-        await supabase.from('financial_records').insert([{
+        const { error: finError } = await supabase.from('financial_records').insert([{
           type: 'income',
           amount: totalAmount,
           category: 'Venda Geral',
@@ -310,9 +312,10 @@ const Lojinha: React.FC = () => {
           branch: 'Grupo',
           date: new Date().toISOString()
         }]);
+        if (finError) throw finError;
       } else if (currentSaleType === 'donation') {
         // Doação: baixa no estoque SEM movimentação financeira
-        await supabase.from('lojinha_special_sales').insert([{
+        const { error: donError } = await supabase.from('lojinha_special_sales').insert([{
           reference: ref,
           sale_type: 'donation',
           total_amount: totalAmount,
@@ -323,9 +326,10 @@ const Lojinha: React.FC = () => {
           user_name: profile?.display_name,
           notes: `Doação para o jovem ${donationYouthName} — aprovada por ${saleApprover}. Itens: ${itemsText}`
         }]);
+        if (donError) throw donError;
       } else if (currentSaleType === 'fiado') {
         // Fiado: fica como "a receber"; a receita só entra ao marcar como pago
-        await supabase.from('lojinha_special_sales').insert([{
+        const { error: fiadoError } = await supabase.from('lojinha_special_sales').insert([{
           reference: ref,
           sale_type: 'fiado',
           total_amount: totalAmount,
@@ -338,6 +342,7 @@ const Lojinha: React.FC = () => {
           user_name: profile?.display_name,
           notes: `Fiado do chefe ${fiadoChefeName} — aprovado por ${saleApprover}. Itens: ${itemsText}`
         }]);
+        if (fiadoError) throw fiadoError;
       }
 
       setPaymentStatus('approved');
@@ -349,12 +354,13 @@ const Lojinha: React.FC = () => {
       if (currentSaleType === 'donation') {
         alert('Doação registrada com sucesso! Os itens foram baixados do estoque, sem movimentação financeira.');
       } else if (currentSaleType === 'fiado') {
-        alert('Venda fiada registrada! Ficará como "a receber" até ser marcada como paga na aba Fiados.');
+        alert('Venda fiada registrada! Ficará como "a receber" até ser marcada como paga na aba Vendas → Fiados & Doações.');
       }
     } catch (err: any) {
       console.error("Erro ao registrar a conclusão da venda:", err);
       setPaymentError(err.message || 'Erro ao persistir a venda.');
       setPaymentStatus('failed');
+      alert('Erro ao registrar a venda: ' + (err?.message || 'Erro inesperado') + '\n\nSe a mensagem falar em permissão/policy (RLS), rode o script SQL de permissões no Supabase.');
     }
   };
 
@@ -588,11 +594,33 @@ const Lojinha: React.FC = () => {
     const { data: prods } = await supabase.from('products').select('*').order('name');
     if (prods) setProducts(prods);
 
-    const { data: trans } = await supabase
+    // Mapa de nomes de usuário (evita depender de um JOIN/FK que pode falhar)
+    let profilesMap: Record<string, string> = {};
+    try {
+      const { data: profs } = await supabase.from('profiles').select('id, display_name');
+      (profs || []).forEach((p: any) => { if (p?.id) profilesMap[p.id] = p.display_name; });
+    } catch (e) { /* ignora */ }
+    const attachName = (rows: any[]) => (rows || []).map(r => ({
+      ...r,
+      profiles: r.user_id && profilesMap[r.user_id] ? { display_name: profilesMap[r.user_id] } : r.profiles
+    }));
+
+    // Movimentações: NÃO usa embed de profiles (o embed pode falhar por falta de FK
+    // e retornar tudo vazio — foi o que fazia sumir vendas/entradas/saídas).
+    const { data: trans, error: transErr } = await supabase
       .from('stock_transactions')
-      .select('*, products(name, size), profiles:user_id(display_name)')
+      .select('*, products(name, size, sale_price, price)')
       .order('created_at', { ascending: false });
-    if (trans) setTransactions(trans);
+    if (!transErr && trans) {
+      setTransactions(attachName(trans));
+    } else {
+      if (transErr) console.warn('Falha no join products, usando consulta simples:', transErr.message);
+      const { data: transPlain } = await supabase
+        .from('stock_transactions')
+        .select('*')
+        .order('created_at', { ascending: false });
+      setTransactions(attachName(transPlain || []));
+    }
 
     const { data: dems } = await supabase
       .from('lojinha_demands')
@@ -823,8 +851,9 @@ const Lojinha: React.FC = () => {
       setIsDemandModalOpen(false);
       setNewDemand({ title: '', description: '', priority: 'Média', status: 'Pendente' });
       fetchData();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      alert('Erro ao cadastrar a demanda: ' + (err?.message || 'Erro inesperado') + '\n\nSe falar em permissão/policy (RLS), rode o script SQL de permissões no Supabase.');
     }
   };
 
@@ -955,8 +984,7 @@ const Lojinha: React.FC = () => {
     { id: 'estoque', label: 'Estoque', icon: Package },
     { id: 'conferencia', label: 'Conferência', icon: BarcodeIcon },
     { id: 'cadastros', label: 'Cadastros', icon: Plus },
-    { id: 'movimentacao', label: 'Movimentação', icon: History },
-    { id: 'pagvendas', label: 'PagVendas', icon: CreditCard },
+    { id: 'pagvendas', label: 'Vendas', icon: CreditCard },
     { id: 'relatorios', label: 'Relatórios', icon: FileText },
     { id: 'demandas', label: 'Demandas', icon: ShoppingBag },
     { id: 'configuracoes', label: 'Acesso', icon: Settings },
@@ -1698,6 +1726,15 @@ const Lojinha: React.FC = () => {
               )}
             </button>
             <button
+              onClick={() => setActivePdvTab('movimentacao')}
+              className={cn(
+                "flex-1 px-4 py-2 text-xs font-bold rounded-md transition-all flex items-center justify-center gap-2",
+                activePdvTab === 'movimentacao' ? "bg-white text-blue-600 shadow-sm" : "text-gray-500 hover:text-gray-900"
+              )}
+            >
+              <History size={14} /> Movimentações
+            </button>
+            <button
               onClick={() => {
                 setActivePdvTab('historico');
                 fetchPagBankSales();
@@ -1707,7 +1744,7 @@ const Lojinha: React.FC = () => {
                 activePdvTab === 'historico' ? "bg-white text-blue-600 shadow-sm" : "text-gray-500 hover:text-gray-900"
               )}
             >
-              <History size={14} /> Histórico PagBank
+              <History size={14} /> Maquininha
             </button>
           </div>
 
@@ -2154,8 +2191,8 @@ const Lojinha: React.FC = () => {
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
               <div className="p-6 border-b border-gray-100 flex justify-between items-center">
                 <div>
-                  <h3 className="text-lg font-bold">Vendas Recentes via PagBank</h3>
-                  <p className="text-xs text-gray-500">Histórico de transações direcionadas à Moderninha Smart 2 e logs do PagBank.</p>
+                  <h3 className="text-lg font-bold">Maquininha (PagBank) — em breve</h3>
+                  <p className="text-xs text-gray-500">A integração de vendas direto na maquininha será feita no futuro. Por enquanto, esta aba é apenas informativa.</p>
                 </div>
                 <button
                   onClick={fetchPagBankSales}
@@ -2301,11 +2338,12 @@ const Lojinha: React.FC = () => {
         </div>
       )}
 
-      {activeTab === 'movimentacao' && (
+      {activeTab === 'pagvendas' && activePdvTab === 'movimentacao' && (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="p-6 border-b border-gray-100">
-              <h3 className="text-lg font-bold">Histórico de Entradas e Saídas (Lojinha)</h3>
+              <h3 className="text-lg font-bold">Movimentações — Entradas, Saídas e Vendas</h3>
+              <p className="text-xs text-gray-500">Todas as vendas, entradas e saídas de estoque da lojinha.</p>
             </div>
             <table className="w-full text-left">
               <thead className="bg-gray-50">
@@ -2656,32 +2694,9 @@ const Lojinha: React.FC = () => {
       )}
 
       {activeTab === 'configuracoes' && (
-        <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-100 animate-in fade-in slide-in-from-bottom-2 duration-300">
-          <div className="max-w-2xl">
-            <h2 className="text-xl font-bold mb-6">Controle de Acesso e Funções</h2>
-            <div className="space-y-6">
-              <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
-                <h4 className="font-bold mb-2">Segregação de Funções</h4>
-                <p className="text-sm text-gray-500 mb-4">
-                  Defina quais usuários podem realizar entradas, saídas e cadastros de novos materiais.
-                </p>
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between p-3 bg-white rounded-lg border border-gray-100">
-                    <span className="text-sm font-medium">Administrador</span>
-                    <span className="text-xs text-green-600 font-bold">Acesso Total</span>
-                  </div>
-                  <div className="flex items-center justify-between p-3 bg-white rounded-lg border border-gray-100">
-                    <span className="text-sm font-medium">Operador de Estoque</span>
-                    <span className="text-xs text-blue-600 font-bold">Entradas/Saídas</span>
-                  </div>
-                  <div className="flex items-center justify-between p-3 bg-white rounded-lg border border-gray-100">
-                    <span className="text-sm font-medium">Vendedor</span>
-                    <span className="text-xs text-yellow-600 font-bold">Apenas Vendas</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+        <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+          {/* Gestão de usuários da lojinha (ver e criar usuários) */}
+          <Users />
         </div>
       )}
 
