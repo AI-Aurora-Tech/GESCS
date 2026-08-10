@@ -28,6 +28,7 @@ import Barcode from 'react-barcode';
 import { cn } from '../lib/utils';
 import { format } from 'date-fns';
 import Logo from '../components/Logo';
+import Users from './Users';
 import { 
   BarChart, 
   Bar, 
@@ -110,7 +111,7 @@ const Lojinha: React.FC = () => {
   const [terminalIp, setTerminalIp] = useState(localStorage.getItem('terminal_ip') || 'localhost:1337');
   const [paymentStatus, setPaymentStatus] = useState<'idle' | 'sending' | 'waiting' | 'approved' | 'failed'>('idle');
   const [paymentError, setPaymentError] = useState('');
-  const [activePdvTab, setActivePdvTab] = useState<'venda' | 'fiados' | 'historico'>('venda');
+  const [activePdvTab, setActivePdvTab] = useState<'venda' | 'fiados' | 'movimentacao' | 'historico'>('venda');
   const [posSearchTerm, setPosSearchTerm] = useState('');
   const [pagBankSales, setPagBankSales] = useState<any[]>([]);
   const [currentTransactionRef, setCurrentTransactionRef] = useState('');
@@ -124,6 +125,8 @@ const Lojinha: React.FC = () => {
   const [fiadoDueDate, setFiadoDueDate] = useState('');
   const [saleApprover, setSaleApprover] = useState('');
   const [specialSales, setSpecialSales] = useState<any[]>([]);
+  const [stockChecks, setStockChecks] = useState<any[]>([]);
+  const [finalizingConference, setFinalizingConference] = useState(false);
 
   const APPROVERS = ['Édson', 'Sandra'];
 
@@ -217,7 +220,7 @@ const Lojinha: React.FC = () => {
         const currentDbStock = dbProd ? dbProd.stock : prod.stock;
 
         // Record stock transaction log (ALWAYS record sale event for dashboard, reports, and movements)
-        await supabase.from('stock_transactions').insert([{
+        const { error: txError } = await supabase.from('stock_transactions').insert([{
           product_id: prod.id,
           type: 'exit',
           quantity: item.quantity,
@@ -225,6 +228,7 @@ const Lojinha: React.FC = () => {
           sale_type: currentSaleType,
           notes: txNotes
         }]);
+        if (txError) throw txError;
 
         if (currentDbStock > 0) {
           const newStock = Math.max(0, currentDbStock - item.quantity);
@@ -299,7 +303,7 @@ const Lojinha: React.FC = () => {
       if (currentSaleType === 'normal') {
         // Venda normal: lança receita no financeiro (comportamento original)
         const fullDescription = `PDV Lojinha: ${itemsText} - Ref #${ref} (${methodStr === 'cash' ? 'Dinheiro' : 'PagBank'})`;
-        await supabase.from('financial_records').insert([{
+        const { error: finError } = await supabase.from('financial_records').insert([{
           type: 'income',
           amount: totalAmount,
           category: 'Venda Geral',
@@ -308,9 +312,10 @@ const Lojinha: React.FC = () => {
           branch: 'Grupo',
           date: new Date().toISOString()
         }]);
+        if (finError) throw finError;
       } else if (currentSaleType === 'donation') {
         // Doação: baixa no estoque SEM movimentação financeira
-        await supabase.from('lojinha_special_sales').insert([{
+        const { error: donError } = await supabase.from('lojinha_special_sales').insert([{
           reference: ref,
           sale_type: 'donation',
           total_amount: totalAmount,
@@ -321,9 +326,10 @@ const Lojinha: React.FC = () => {
           user_name: profile?.display_name,
           notes: `Doação para o jovem ${donationYouthName} — aprovada por ${saleApprover}. Itens: ${itemsText}`
         }]);
+        if (donError) throw donError;
       } else if (currentSaleType === 'fiado') {
         // Fiado: fica como "a receber"; a receita só entra ao marcar como pago
-        await supabase.from('lojinha_special_sales').insert([{
+        const { error: fiadoError } = await supabase.from('lojinha_special_sales').insert([{
           reference: ref,
           sale_type: 'fiado',
           total_amount: totalAmount,
@@ -336,6 +342,7 @@ const Lojinha: React.FC = () => {
           user_name: profile?.display_name,
           notes: `Fiado do chefe ${fiadoChefeName} — aprovado por ${saleApprover}. Itens: ${itemsText}`
         }]);
+        if (fiadoError) throw fiadoError;
       }
 
       setPaymentStatus('approved');
@@ -347,12 +354,13 @@ const Lojinha: React.FC = () => {
       if (currentSaleType === 'donation') {
         alert('Doação registrada com sucesso! Os itens foram baixados do estoque, sem movimentação financeira.');
       } else if (currentSaleType === 'fiado') {
-        alert('Venda fiada registrada! Ficará como "a receber" até ser marcada como paga na aba Fiados.');
+        alert('Venda fiada registrada! Ficará como "a receber" até ser marcada como paga na aba Vendas → Fiados & Doações.');
       }
     } catch (err: any) {
       console.error("Erro ao registrar a conclusão da venda:", err);
       setPaymentError(err.message || 'Erro ao persistir a venda.');
       setPaymentStatus('failed');
+      alert('Erro ao registrar a venda: ' + (err?.message || 'Erro inesperado') + '\n\nSe a mensagem falar em permissão/policy (RLS), rode o script SQL de permissões no Supabase.');
     }
   };
 
@@ -475,6 +483,73 @@ const Lojinha: React.FC = () => {
     }
   };
 
+  const handleFinalizeConference = async () => {
+    const scannedProducts = products.filter(p => (scannedItems[p.barcode] || 0) > 0);
+    if (scannedProducts.length === 0) {
+      alert('Escaneie ao menos um produto antes de finalizar a conferência.');
+      return;
+    }
+
+    // Só ajusta os produtos escaneados cuja contagem física difere do sistema.
+    // Produtos NÃO escaneados não são zerados (evita zerar por esquecimento de leitura).
+    const adjustments = scannedProducts
+      .map(p => ({ p, physical: scannedItems[p.barcode] || 0 }))
+      .filter(x => x.physical !== (Number(x.p.stock) || 0));
+
+    const confirmMsg = adjustments.length === 0
+      ? 'Nenhuma divergência entre a contagem física e o sistema. Deseja registrar a conferência mesmo assim?'
+      : `Finalizar conferência? ${adjustments.length} produto(s) terão o estoque ajustado para a contagem física.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setFinalizingConference(true);
+    try {
+      for (const { p, physical } of adjustments) {
+        const currentStock = Number(p.stock) || 0;
+        const diff = physical - currentStock;
+
+        const { data: updated, error: updErr } = await supabase
+          .from('products')
+          .update({ stock: physical })
+          .eq('id', p.id)
+          .select('id');
+        if (updErr) throw updErr;
+        if (!updated || updated.length === 0) {
+          throw new Error('Não foi possível ajustar o estoque (0 linhas). Verifique as permissões (RLS) de UPDATE em "products".');
+        }
+
+        await supabase.from('stock_transactions').insert([{
+          product_id: p.id,
+          type: diff > 0 ? 'entry' : 'exit',
+          quantity: Math.abs(diff),
+          user_id: profile?.id,
+          notes: `Ajuste por conferência de estoque (sistema: ${currentStock} → físico: ${physical})`
+        }]);
+      }
+
+      await supabase.from('lojinha_stock_checks').insert([{
+        user_id: profile?.id,
+        user_name: profile?.display_name || 'Funcionário(a) Lojinha',
+        total_items: scannedProducts.length,
+        divergences: adjustments.length,
+        details: adjustments.map(a => ({
+          name: a.p.name,
+          size: a.p.size || null,
+          system: Number(a.p.stock) || 0,
+          physical: a.physical
+        }))
+      }]);
+
+      setScannedItems({});
+      fetchData();
+      alert(`Conferência finalizada! ${adjustments.length} ajuste(s) de estoque aplicado(s).`);
+    } catch (err: any) {
+      console.error(err);
+      alert('Erro ao finalizar a conferência: ' + (err?.message || 'Erro inesperado'));
+    } finally {
+      setFinalizingConference(false);
+    }
+  };
+
   useEffect(() => {
     if (!user || authLoading) return;
 
@@ -501,11 +576,17 @@ const Lojinha: React.FC = () => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'lojinha_special_sales' }, () => fetchData())
       .subscribe();
 
+    const stockChecksSubscription = supabase
+      .channel('stock_checks_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'lojinha_stock_checks' }, () => fetchData())
+      .subscribe();
+
     return () => {
       supabase.removeChannel(productsSubscription);
       supabase.removeChannel(transactionsSubscription);
       supabase.removeChannel(demandsSubscription);
       supabase.removeChannel(specialSalesSubscription);
+      supabase.removeChannel(stockChecksSubscription);
     };
   }, [user, authLoading]);
 
@@ -513,11 +594,33 @@ const Lojinha: React.FC = () => {
     const { data: prods } = await supabase.from('products').select('*').order('name');
     if (prods) setProducts(prods);
 
-    const { data: trans } = await supabase
+    // Mapa de nomes de usuário (evita depender de um JOIN/FK que pode falhar)
+    let profilesMap: Record<string, string> = {};
+    try {
+      const { data: profs } = await supabase.from('profiles').select('id, display_name');
+      (profs || []).forEach((p: any) => { if (p?.id) profilesMap[p.id] = p.display_name; });
+    } catch (e) { /* ignora */ }
+    const attachName = (rows: any[]) => (rows || []).map(r => ({
+      ...r,
+      profiles: r.user_id && profilesMap[r.user_id] ? { display_name: profilesMap[r.user_id] } : r.profiles
+    }));
+
+    // Movimentações: NÃO usa embed de profiles (o embed pode falhar por falta de FK
+    // e retornar tudo vazio — foi o que fazia sumir vendas/entradas/saídas).
+    const { data: trans, error: transErr } = await supabase
       .from('stock_transactions')
-      .select('*, products(name, size), profiles:user_id(display_name)')
+      .select('*, products(name, size, sale_price, price)')
       .order('created_at', { ascending: false });
-    if (trans) setTransactions(trans);
+    if (!transErr && trans) {
+      setTransactions(attachName(trans));
+    } else {
+      if (transErr) console.warn('Falha no join products, usando consulta simples:', transErr.message);
+      const { data: transPlain } = await supabase
+        .from('stock_transactions')
+        .select('*')
+        .order('created_at', { ascending: false });
+      setTransactions(attachName(transPlain || []));
+    }
 
     const { data: dems } = await supabase
       .from('lojinha_demands')
@@ -531,6 +634,13 @@ const Lojinha: React.FC = () => {
       .select('*')
       .order('created_at', { ascending: false });
     if (special) setSpecialSales(special);
+
+    // Conferências de estoque (para o alerta de 15 dias). Tabela pode não existir ainda.
+    const { data: checks } = await supabase
+      .from('lojinha_stock_checks')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (checks) setStockChecks(checks);
   };
 
   const handleAddProduct = async (e: React.FormEvent) => {
@@ -741,8 +851,9 @@ const Lojinha: React.FC = () => {
       setIsDemandModalOpen(false);
       setNewDemand({ title: '', description: '', priority: 'Média', status: 'Pendente' });
       fetchData();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      alert('Erro ao cadastrar a demanda: ' + (err?.message || 'Erro inesperado') + '\n\nSe falar em permissão/policy (RLS), rode o script SQL de permissões no Supabase.');
     }
   };
 
@@ -781,32 +892,47 @@ const Lojinha: React.FC = () => {
     e.preventDefault();
     if (!selectedProduct) return;
 
-    const newStock = stockAction === 'entry' 
-      ? selectedProduct.stock + quantity 
-      : selectedProduct.stock - quantity;
+    const qty = Number(quantity) || 0;
+    if (qty <= 0) { alert('Informe uma quantidade válida (maior que zero).'); return; }
 
     try {
-      const { error: updateError } = await supabase
+      // Busca o estoque mais recente do banco para não usar um valor defasado da tela
+      const { data: dbProd, error: fetchErr } = await supabase
+        .from('products')
+        .select('stock')
+        .eq('id', selectedProduct.id)
+        .single();
+      if (fetchErr) throw fetchErr;
+
+      const currentStock = Number(dbProd?.stock) || 0;
+      const newStock = stockAction === 'entry' ? currentStock + qty : currentStock - qty;
+
+      // Atualiza e confirma que a linha foi realmente alterada (detecta bloqueio de RLS)
+      const { data: updated, error: updateError } = await supabase
         .from('products')
         .update({ stock: newStock })
-        .eq('id', selectedProduct.id);
-      
+        .eq('id', selectedProduct.id)
+        .select('id, stock');
+
       if (updateError) throw updateError;
+      if (!updated || updated.length === 0) {
+        throw new Error('A atualização não foi aplicada (0 linhas). Verifique as permissões de banco (RLS) de UPDATE na tabela "products".');
+      }
 
       const { error: transError } = await supabase
         .from('stock_transactions')
         .insert([{
           product_id: selectedProduct.id,
           type: stockAction,
-          quantity,
+          quantity: qty,
           user_id: profile?.id,
-          notes: `Ajuste manual de estoque (${stockAction})`
+          notes: `Ajuste manual de estoque (${stockAction === 'entry' ? 'entrada' : 'saída'})`
         }]);
-      
+
       if (transError) throw transError;
 
-      // Automatic Demand Logic: If stock becomes negative or zero, create a demand
-      if (stockAction === 'exit' && newStock <= (selectedProduct.min_stock || 0)) {
+      // Demanda automática: se o estoque ficar <= mínimo, cria demanda de reposição
+      if (stockAction === 'exit' && newStock <= (Number(selectedProduct.min_stock) || 0)) {
         const { error: demandError } = await supabase
           .from('lojinha_demands')
           .insert([{
@@ -818,15 +944,16 @@ const Lojinha: React.FC = () => {
             user_id: profile?.id,
             user_name: 'Sistema (Automático)'
           }]);
-        
+
         if (demandError) console.error('Erro ao criar demanda automática:', demandError);
       }
 
       setIsStockModalOpen(false);
       setQuantity(1);
       fetchData();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      alert('Erro ao atualizar o estoque: ' + (err?.message || 'Erro inesperado'));
     }
   };
 
@@ -857,8 +984,7 @@ const Lojinha: React.FC = () => {
     { id: 'estoque', label: 'Estoque', icon: Package },
     { id: 'conferencia', label: 'Conferência', icon: BarcodeIcon },
     { id: 'cadastros', label: 'Cadastros', icon: Plus },
-    { id: 'movimentacao', label: 'Movimentação', icon: History },
-    { id: 'pagvendas', label: 'PagVendas', icon: CreditCard },
+    { id: 'pagvendas', label: 'Vendas', icon: CreditCard },
     { id: 'relatorios', label: 'Relatórios', icon: FileText },
     { id: 'demandas', label: 'Demandas', icon: ShoppingBag },
     { id: 'configuracoes', label: 'Acesso', icon: Settings },
@@ -876,10 +1002,12 @@ const Lojinha: React.FC = () => {
     .filter(s => !s.paid)
     .reduce((acc, s) => acc + Number(s.total_amount || 0), 0);
 
-  const isSaturday = new Date().getDay() === 6;
-  // Simple logic: show alert every other Saturday (even weeks)
-  const isStockCheckWeek = Math.floor(new Date().getDate() / 7) % 2 === 0;
-  const showStockCheckAlert = isSaturday && isStockCheckWeek;
+  // Conferência de estoque: obrigatória a cada 15 dias
+  const lastStockCheck = stockChecks[0];
+  const daysSinceCheck = lastStockCheck?.created_at
+    ? Math.floor((Date.now() - new Date(lastStockCheck.created_at).getTime()) / (1000 * 60 * 60 * 24))
+    : null;
+  const showStockCheckAlert = daysSinceCheck === null || daysSinceCheck >= 15;
 
   return (
     <>
@@ -1084,12 +1212,22 @@ const Lojinha: React.FC = () => {
         )}
 
         {showStockCheckAlert && (
-          <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl flex items-center text-blue-800">
-            <BarcodeIcon className="w-6 h-6 mr-3 text-blue-600" />
-            <div>
-              <h3 className="font-bold">Lembrete de Conferência de Estoque</h3>
-              <p className="text-sm text-blue-600">Hoje é sábado de conferência! Acesse a aba "Conferência" para realizar o balanço quinzenal.</p>
+          <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl flex flex-col md:flex-row md:items-center gap-3 text-blue-800">
+            <BarcodeIcon className="w-6 h-6 text-blue-600 flex-shrink-0" />
+            <div className="flex-1">
+              <h3 className="font-bold">Conferência de estoque pendente</h3>
+              <p className="text-sm text-blue-600">
+                {daysSinceCheck === null
+                  ? 'Nenhuma conferência registrada ainda. A conferência do estoque deve ser feita a cada 15 dias.'
+                  : `A última conferência foi há ${daysSinceCheck} dias. É necessário realizar a conferência do estoque (a cada 15 dias).`}
+              </p>
             </div>
+            <button
+              onClick={() => setActiveTab('conferencia')}
+              className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 whitespace-nowrap self-start md:self-auto"
+            >
+              Fazer conferência
+            </button>
           </div>
         )}
 
@@ -1218,18 +1356,7 @@ const Lojinha: React.FC = () => {
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex gap-2">
-                        <button 
-                          onClick={() => {
-                            setSelectedProduct(product);
-                            setRestockQuantity(0);
-                            setIsRestockModalOpen(true);
-                          }}
-                          title="Renovar Estoque"
-                          className="p-2 text-green-600 hover:bg-green-50 rounded-lg"
-                        >
-                          <Plus size={18} />
-                        </button>
-                        <button 
+                        <button
                           onClick={() => {
                             setSelectedProduct(product);
                             setNewProduct({
@@ -1383,14 +1510,60 @@ const Lojinha: React.FC = () => {
             </div>
           </div>
             
-            <div className="mt-6 flex justify-end">
-              <button 
-                onClick={() => setScannedItems({})}
-                className="px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg font-medium transition-colors"
-              >
-                Zerar Contagem
-              </button>
-            </div>
+            {(() => {
+              const scannedProds = products.filter(p => (scannedItems[p.barcode] || 0) > 0);
+              const divergent = scannedProds.filter(p => (scannedItems[p.barcode] || 0) !== (Number(p.stock) || 0));
+              const missing = scannedProds.filter(p => (scannedItems[p.barcode] || 0) < (Number(p.stock) || 0));
+              const excess = scannedProds.filter(p => (scannedItems[p.barcode] || 0) > (Number(p.stock) || 0));
+              return (
+                <div className="mt-6 space-y-4">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="p-3 rounded-xl border border-gray-100 bg-gray-50">
+                      <p className="text-[10px] font-black uppercase text-gray-400">Produtos conferidos</p>
+                      <p className="text-xl font-black text-gray-900">{scannedProds.length}</p>
+                    </div>
+                    <div className="p-3 rounded-xl border border-gray-100 bg-amber-50/40">
+                      <p className="text-[10px] font-black uppercase text-amber-500">Divergentes</p>
+                      <p className="text-xl font-black text-amber-700">{divergent.length}</p>
+                    </div>
+                    <div className="p-3 rounded-xl border border-gray-100 bg-red-50/40">
+                      <p className="text-[10px] font-black uppercase text-red-500">Faltando</p>
+                      <p className="text-xl font-black text-red-700">{missing.length}</p>
+                    </div>
+                    <div className="p-3 rounded-xl border border-gray-100 bg-green-50/40">
+                      <p className="text-[10px] font-black uppercase text-green-600">Sobrando</p>
+                      <p className="text-xl font-black text-green-700">{excess.length}</p>
+                    </div>
+                  </div>
+                  <div className="flex flex-col sm:flex-row justify-between gap-3">
+                    <p className="text-xs text-gray-400 self-center max-w-md">
+                      Produtos não escaneados ficam como "Pendente" e <strong>não são alterados</strong> ao finalizar. Ao finalizar, os produtos conferidos têm o estoque ajustado para a contagem física.
+                    </p>
+                    <div className="flex gap-2 justify-end flex-shrink-0">
+                      <button
+                        onClick={() => setScannedItems({})}
+                        className="px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg font-medium transition-colors"
+                      >
+                        Zerar Contagem
+                      </button>
+                      <button
+                        onClick={handleFinalizeConference}
+                        disabled={finalizingConference || scannedProds.length === 0}
+                        className="px-4 py-2 bg-green-600 text-white rounded-lg font-bold hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
+                      >
+                        <Check size={16} /> {finalizingConference ? 'Finalizando...' : 'Finalizar e Corrigir Estoque'}
+                      </button>
+                    </div>
+                  </div>
+                  {lastStockCheck?.created_at && (
+                    <p className="text-[11px] text-gray-400">
+                      Última conferência: {format(new Date(lastStockCheck.created_at), 'dd/MM/yyyy HH:mm')}
+                      {lastStockCheck.user_name ? ` por ${lastStockCheck.user_name}` : ''}.
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -1553,6 +1726,15 @@ const Lojinha: React.FC = () => {
               )}
             </button>
             <button
+              onClick={() => setActivePdvTab('movimentacao')}
+              className={cn(
+                "flex-1 px-4 py-2 text-xs font-bold rounded-md transition-all flex items-center justify-center gap-2",
+                activePdvTab === 'movimentacao' ? "bg-white text-blue-600 shadow-sm" : "text-gray-500 hover:text-gray-900"
+              )}
+            >
+              <History size={14} /> Movimentações
+            </button>
+            <button
               onClick={() => {
                 setActivePdvTab('historico');
                 fetchPagBankSales();
@@ -1562,7 +1744,7 @@ const Lojinha: React.FC = () => {
                 activePdvTab === 'historico' ? "bg-white text-blue-600 shadow-sm" : "text-gray-500 hover:text-gray-900"
               )}
             >
-              <History size={14} /> Histórico PagBank
+              <History size={14} /> Maquininha
             </button>
           </div>
 
@@ -2009,8 +2191,8 @@ const Lojinha: React.FC = () => {
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
               <div className="p-6 border-b border-gray-100 flex justify-between items-center">
                 <div>
-                  <h3 className="text-lg font-bold">Vendas Recentes via PagBank</h3>
-                  <p className="text-xs text-gray-500">Histórico de transações direcionadas à Moderninha Smart 2 e logs do PagBank.</p>
+                  <h3 className="text-lg font-bold">Maquininha (PagBank) — em breve</h3>
+                  <p className="text-xs text-gray-500">A integração de vendas direto na maquininha será feita no futuro. Por enquanto, esta aba é apenas informativa.</p>
                 </div>
                 <button
                   onClick={fetchPagBankSales}
@@ -2156,11 +2338,12 @@ const Lojinha: React.FC = () => {
         </div>
       )}
 
-      {activeTab === 'movimentacao' && (
+      {activeTab === 'pagvendas' && activePdvTab === 'movimentacao' && (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="p-6 border-b border-gray-100">
-              <h3 className="text-lg font-bold">Histórico de Entradas e Saídas (Lojinha)</h3>
+              <h3 className="text-lg font-bold">Movimentações — Entradas, Saídas e Vendas</h3>
+              <p className="text-xs text-gray-500">Todas as vendas, entradas e saídas de estoque da lojinha.</p>
             </div>
             <table className="w-full text-left">
               <thead className="bg-gray-50">
@@ -2511,32 +2694,9 @@ const Lojinha: React.FC = () => {
       )}
 
       {activeTab === 'configuracoes' && (
-        <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-100 animate-in fade-in slide-in-from-bottom-2 duration-300">
-          <div className="max-w-2xl">
-            <h2 className="text-xl font-bold mb-6">Controle de Acesso e Funções</h2>
-            <div className="space-y-6">
-              <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
-                <h4 className="font-bold mb-2">Segregação de Funções</h4>
-                <p className="text-sm text-gray-500 mb-4">
-                  Defina quais usuários podem realizar entradas, saídas e cadastros de novos materiais.
-                </p>
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between p-3 bg-white rounded-lg border border-gray-100">
-                    <span className="text-sm font-medium">Administrador</span>
-                    <span className="text-xs text-green-600 font-bold">Acesso Total</span>
-                  </div>
-                  <div className="flex items-center justify-between p-3 bg-white rounded-lg border border-gray-100">
-                    <span className="text-sm font-medium">Operador de Estoque</span>
-                    <span className="text-xs text-blue-600 font-bold">Entradas/Saídas</span>
-                  </div>
-                  <div className="flex items-center justify-between p-3 bg-white rounded-lg border border-gray-100">
-                    <span className="text-sm font-medium">Vendedor</span>
-                    <span className="text-xs text-yellow-600 font-bold">Apenas Vendas</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+        <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+          {/* Gestão de usuários da lojinha (ver e criar usuários) */}
+          <Users />
         </div>
       )}
 
