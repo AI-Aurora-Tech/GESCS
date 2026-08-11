@@ -170,11 +170,13 @@ const Dashboard: React.FC = () => {
       try {
         const { data: lojinhaData, error: lojinhaError } = await supabase
           .from('stock_transactions')
-          .select('quantity, products(price, sale_price)')
+          .select('quantity, sale_type, products(price, sale_price)')
           .in('type', ['out', 'exit']);
-        
+
         if (!lojinhaError && lojinhaData) {
           lojinhaTotal = lojinhaData.reduce((acc, curr: any) => {
+            // Doação não é venda -> não entra no faturamento
+            if (curr.sale_type === 'donation') return acc;
             const pr = Number(curr.products?.sale_price) || Number(curr.products?.price) || 0;
             return acc + ((Number(curr.quantity) || 0) * pr);
           }, 0);
@@ -186,8 +188,9 @@ const Dashboard: React.FC = () => {
       try {
         const { data: cantinaData, error: cantinaError } = await supabase
           .from('financial_records')
-          .select('type, amount');
-        
+          .select('type, amount')
+          .eq('module', 'cantina');
+
         if (!cantinaError && cantinaData) {
           cantinaBalance = cantinaData.reduce((acc, curr) => {
             const amt = Number(curr.amount) || 0;

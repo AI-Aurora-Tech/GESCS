@@ -1036,8 +1036,10 @@ const Cantina: React.FC = () => {
     }
   };
 
-  const totalIncome = records.filter(r => r.type === 'income').reduce((acc, r) => acc + r.amount, 0);
-  const totalExpense = records.filter(r => r.type === 'expense').reduce((acc, r) => acc + r.amount, 0);
+  // Somente lançamentos da CANTINA (Lojinha e outros módulos não entram aqui)
+  const cantinaRecords = records.filter(r => r.module === 'cantina');
+  const totalIncome = cantinaRecords.filter(r => r.type === 'income').reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
+  const totalExpense = cantinaRecords.filter(r => r.type === 'expense').reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
   const balance = totalIncome - totalExpense;
 
   const isUserCantina = profile?.role === 'user_cantina';
@@ -1152,7 +1154,7 @@ const Cantina: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {records.map((record) => {
+                  {cantinaRecords.map((record) => {
                     const parsed = extractAttachment(record);
                     return (
                       <tr key={record.id} className="hover:bg-gray-50 transition-colors">
