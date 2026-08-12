@@ -58,13 +58,15 @@ const Dashboard: React.FC = () => {
 
         // Demandas pendentes
         try {
-          const { data: dems } = await supabase.from('lojinha_demands').select('title, status').eq('status', 'pending');
-          (dems || []).forEach((d: any) => list.push({
-            title: `Demanda pendente: ${d.title}`,
-            type: 'info',
-            subtitle: 'Lojinha • Demanda',
-            module: 'lojinha'
-          }));
+          const { data: dems } = await supabase.from('lojinha_demands').select('*').eq('status', 'pending');
+          (dems || [])
+            .filter((d: any) => !d.frozen) // demandas congeladas (sazonais) não geram alerta
+            .forEach((d: any) => list.push({
+              title: `Demanda pendente: ${d.title}`,
+              type: 'info',
+              subtitle: 'Lojinha • Demanda',
+              module: 'lojinha'
+            }));
         } catch (e) {}
 
         // Fiados vencidos

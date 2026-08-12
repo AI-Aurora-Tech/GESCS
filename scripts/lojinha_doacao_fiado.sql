@@ -237,3 +237,54 @@ END $$;
 -- FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
 -- WHERE n.nspname = 'public' AND c.relkind = 'r'
 -- ORDER BY tabela;
+
+
+-- ============================================================================
+-- PARTE 4 — Edição em massa, pedidos de doação, ciência/compra de demanda
+--           e itens sazonais (congelar). Idempotente.
+-- ============================================================================
+
+-- 4.1) Produtos: disponibilidade para venda (itens sazonais podem ser "congelados").
+ALTER TABLE public.products
+  ADD COLUMN IF NOT EXISTS available_for_sale boolean NOT NULL DEFAULT true;
+
+-- 4.2) Demandas: ciência (Édson viu), confirmação de compra e congelamento (sazonal).
+ALTER TABLE public.lojinha_demands
+  ADD COLUMN IF NOT EXISTS acknowledged_by text,
+  ADD COLUMN IF NOT EXISTS acknowledged_at timestamptz,
+  ADD COLUMN IF NOT EXISTS purchased_by text,
+  ADD COLUMN IF NOT EXISTS purchased_at timestamptz,
+  ADD COLUMN IF NOT EXISTS frozen boolean NOT NULL DEFAULT false;
+
+-- 4.3) Pedidos de doação criados por chefes (Édson/Sandra) -> tarefa p/ a lojinha.
+CREATE TABLE IF NOT EXISTS public.lojinha_donation_requests (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  youth_name    text NOT NULL,                 -- jovem beneficiado
+  product_id    uuid,                          -- item a doar (opcional)
+  item_name     text,                          -- descrição do item (snapshot)
+  quantity      int NOT NULL DEFAULT 1,
+  status        text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','fulfilled','cancelled')),
+  requested_by  text,                          -- chefe que pediu (Édson/Sandra)
+  requester_id  uuid,
+  fulfilled_by  text,
+  fulfilled_at  timestamptz,
+  notes         text,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_lojinha_donation_requests_status
+  ON public.lojinha_donation_requests (status);
+
+ALTER TABLE public.lojinha_donation_requests ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "donation_requests_all" ON public.lojinha_donation_requests;
+CREATE POLICY "donation_requests_all"
+  ON public.lojinha_donation_requests FOR ALL
+  USING (auth.role() = 'authenticated')
+  WITH CHECK (auth.role() = 'authenticated');
+
+DO $$
+BEGIN
+  BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.lojinha_donation_requests;
+  EXCEPTION WHEN duplicate_object THEN NULL;
+  END;
+END $$;
