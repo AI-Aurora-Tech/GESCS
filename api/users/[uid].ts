@@ -15,19 +15,22 @@ export default async function handler(req: any, res: any) {
   });
 
   try {
-    const { error: deleteAuthError } = await supabaseAdmin.auth.admin.deleteUser(uid);
-    if (deleteAuthError) throw deleteAuthError;
-
+    // 1) Remove o PERFIL primeiro. A FK profiles.id -> auth.users.id normalmente
+    //    é RESTRICT, então excluir o usuário do Auth com o perfil ainda existente
+    //    causa "Database error deleting user". Removendo o perfil antes, resolve.
     const { error: deleteProfileError } = await supabaseAdmin
       .from("profiles")
       .delete()
       .eq("id", uid);
-    
     if (deleteProfileError) throw deleteProfileError;
+
+    // 2) Remove o usuário do Auth.
+    const { error: deleteAuthError } = await supabaseAdmin.auth.admin.deleteUser(uid);
+    if (deleteAuthError) throw deleteAuthError;
 
     res.json({ success: true });
   } catch (error: any) {
     console.error("Error deleting user:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: error.message || "Erro ao excluir usuário" });
   }
 }

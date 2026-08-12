@@ -681,10 +681,15 @@ const Lojinha: React.FC = () => {
   };
 
   const handleToggleFreezeDemand = async (demand: any) => {
+    const willFreeze = !demand.frozen;
     try {
       const { error } = await supabase
         .from('lojinha_demands')
-        .update({ frozen: !demand.frozen })
+        .update({
+          frozen: willFreeze,
+          frozen_by: willFreeze ? (profile?.display_name || 'Responsável') : null,
+          frozen_at: willFreeze ? new Date().toISOString() : null
+        })
         .eq('id', demand.id);
       if (error) throw error;
       fetchData();
@@ -3024,13 +3029,13 @@ const Lojinha: React.FC = () => {
                   <p className="text-sm text-gray-500 mb-3 line-clamp-2">{demand.description}</p>
                   <div className="flex flex-wrap gap-1.5 mb-3">
                     {demand.acknowledged_by && (
-                      <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-blue-100 text-blue-700">Ciente: {demand.acknowledged_by}</span>
+                      <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-blue-100 text-blue-700">{demand.acknowledged_by} leu</span>
                     )}
                     {demand.purchased_by && (
-                      <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-green-100 text-green-700">Comprado</span>
+                      <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-green-100 text-green-700">{demand.purchased_by} comprou</span>
                     )}
                     {demand.frozen && (
-                      <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-cyan-100 text-cyan-700">Congelada</span>
+                      <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-cyan-100 text-cyan-700">{demand.frozen_by ? `${demand.frozen_by} congelou` : 'Congelada'}</span>
                     )}
                   </div>
                   <div className="flex items-center justify-between pt-4 border-t border-gray-50">
@@ -3482,18 +3487,20 @@ const Lojinha: React.FC = () => {
               <div className="flex flex-wrap items-center gap-2 text-xs">
                 {selectedDemand.acknowledged_by ? (
                   <span className="px-2 py-1 rounded-full bg-blue-100 text-blue-700 font-bold">
-                    Ciente: {selectedDemand.acknowledged_by}{selectedDemand.acknowledged_at ? ` (${format(new Date(selectedDemand.acknowledged_at), 'dd/MM HH:mm')})` : ''}
+                    {selectedDemand.acknowledged_by} marcou como Lido{selectedDemand.acknowledged_at ? ` • ${format(new Date(selectedDemand.acknowledged_at), 'dd/MM HH:mm')}` : ''}
                   </span>
                 ) : (
-                  <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-500 font-bold">Sem ciência ainda</span>
+                  <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-500 font-bold">Ainda não lido</span>
                 )}
                 {selectedDemand.purchased_by && (
                   <span className="px-2 py-1 rounded-full bg-green-100 text-green-700 font-bold">
-                    Comprado: {selectedDemand.purchased_by}{selectedDemand.purchased_at ? ` (${format(new Date(selectedDemand.purchased_at), 'dd/MM')})` : ''}
+                    {selectedDemand.purchased_by} marcou como Comprado{selectedDemand.purchased_at ? ` • ${format(new Date(selectedDemand.purchased_at), 'dd/MM')}` : ''}
                   </span>
                 )}
                 {selectedDemand.frozen && (
-                  <span className="px-2 py-1 rounded-full bg-cyan-100 text-cyan-700 font-bold">Congelada (sazonal)</span>
+                  <span className="px-2 py-1 rounded-full bg-cyan-100 text-cyan-700 font-bold">
+                    {selectedDemand.frozen_by ? `${selectedDemand.frozen_by} congelou` : 'Congelada (sazonal)'}
+                  </span>
                 )}
               </div>
               <div className="flex flex-wrap gap-2">
@@ -3503,7 +3510,7 @@ const Lojinha: React.FC = () => {
                     onClick={() => handleAcknowledgeDemand(selectedDemand)}
                     className="px-3 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg text-xs font-bold flex items-center gap-1.5"
                   >
-                    <Eye size={14} /> Confirmar ciência
+                    <Eye size={14} /> Marcar como lido
                   </button>
                 )}
                 {selectedDemand.status !== 'completed' && (

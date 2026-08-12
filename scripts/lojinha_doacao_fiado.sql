@@ -288,3 +288,11 @@ BEGIN
   EXCEPTION WHEN duplicate_object THEN NULL;
   END;
 END $$;
+
+
+-- ============================================================================
+-- PARTE 5 — Quem congelou a demanda (tag). Idempotente.
+-- ============================================================================
+ALTER TABLE public.lojinha_demands
+  ADD COLUMN IF NOT EXISTS frozen_by text,
+  ADD COLUMN IF NOT EXISTS frozen_at timestamptz;
