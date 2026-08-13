@@ -20,7 +20,12 @@ import {
   Gift,
   AlertTriangle,
   Clock,
-  Check
+  Check,
+  DollarSign,
+  Snowflake,
+  Eye,
+  ShoppingCart,
+  MessageCircle
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { useAuth } from '../AuthContext';
@@ -52,6 +57,7 @@ interface Product {
   category: string;
   min_stock?: number;
   max_stock?: number;
+  available_for_sale?: boolean;
 }
 
 const Lojinha: React.FC = () => {
@@ -128,6 +134,23 @@ const Lojinha: React.FC = () => {
   const [stockChecks, setStockChecks] = useState<any[]>([]);
   const [finalizingConference, setFinalizingConference] = useState(false);
 
+  // Edição de valores em massa
+  const [isBulkEditOpen, setIsBulkEditOpen] = useState(false);
+  const [bulkApplyPurchase, setBulkApplyPurchase] = useState(false);
+  const [bulkApplySale, setBulkApplySale] = useState(true);
+  const [bulkPurchasePrice, setBulkPurchasePrice] = useState<number>(0);
+  const [bulkSalePrice, setBulkSalePrice] = useState<number>(0);
+
+  // Pedidos de doação (criados pelos chefes -> tarefa para a lojinha)
+  const [donationRequests, setDonationRequests] = useState<any[]>([]);
+  const [isDonationReqModalOpen, setIsDonationReqModalOpen] = useState(false);
+  const [newDonationReq, setNewDonationReq] = useState({ youth_name: '', product_id: '', quantity: 1, notes: '' });
+
+  // Aprovação de fiado via WhatsApp (link pronto)
+  const [waEdson, setWaEdson] = useState(localStorage.getItem('wa_edson') || '');
+  const [waJuliana, setWaJuliana] = useState(localStorage.getItem('wa_juliana') || '');
+  const [pendingFiadoApproval, setPendingFiadoApproval] = useState<any | null>(null);
+
   const APPROVERS = ['Édson', 'Sandra'];
 
   const resetSpecialSaleFields = () => {
@@ -157,6 +180,10 @@ const Lojinha: React.FC = () => {
   }, [activeTab]);
 
   const addToCart = (product: Product) => {
+    if ((product as any).available_for_sale === false) {
+      alert('Este item está marcado como INDISPONÍVEL (sazonal/congelado) e não pode ser vendido. Descongele em Estoque para vender.');
+      return;
+    }
     setCart(prev => {
       const existing = prev.find(item => item.product.id === product.id);
       if (existing) {
@@ -345,6 +372,14 @@ const Lojinha: React.FC = () => {
         if (fiadoError) throw fiadoError;
       }
 
+      // Captura os dados do fiado ANTES de limpar os campos (para o alerta de aprovação)
+      const fiadoInfo = currentSaleType === 'fiado' ? {
+        chefe_name: fiadoChefeName,
+        total_amount: totalAmount,
+        due_date: fiadoDueDate,
+        items: cartSnapshot
+      } : null;
+
       setPaymentStatus('approved');
       setCart([]);
       resetSpecialSaleFields();
@@ -354,7 +389,8 @@ const Lojinha: React.FC = () => {
       if (currentSaleType === 'donation') {
         alert('Doação registrada com sucesso! Os itens foram baixados do estoque, sem movimentação financeira.');
       } else if (currentSaleType === 'fiado') {
-        alert('Venda fiada registrada! Ficará como "a receber" até ser marcada como paga na aba Vendas → Fiados & Doações.');
+        // Abre o alerta de aprovação por WhatsApp (Édson / Juliana)
+        setPendingFiadoApproval(fiadoInfo);
       }
     } catch (err: any) {
       console.error("Erro ao registrar a conclusão da venda:", err);
@@ -550,6 +586,222 @@ const Lojinha: React.FC = () => {
     }
   };
 
+  // ---- Edição de valores em massa ----
+  const handleBulkPriceUpdate = async () => {
+    const ids = Array.from(selectedProductIds);
+    if (ids.length === 0) { alert('Selecione ao menos um produto.'); return; }
+    if (!bulkApplyPurchase && !bulkApplySale) { alert('Marque ao menos um valor para alterar (custo e/ou venda).'); return; }
+    try {
+      const patch: any = {};
+      if (bulkApplyPurchase) patch.purchase_price = Number(bulkPurchasePrice) || 0;
+      if (bulkApplySale) { patch.sale_price = Number(bulkSalePrice) || 0; patch.price = Number(bulkSalePrice) || 0; }
+
+      const { data: updated, error } = await supabase
+        .from('products')
+        .update(patch)
+        .in('id', ids)
+        .select('id');
+      if (error) throw error;
+      if (!updated || updated.length === 0) {
+        throw new Error('Nenhum produto foi alterado (0 linhas). Verifique as permissões (RLS) de UPDATE em "products".');
+      }
+      setIsBulkEditOpen(false);
+      setSelectedProductIds(new Set());
+      fetchData();
+      alert(`${updated.length} produto(s) atualizado(s).`);
+    } catch (err: any) {
+      console.error(err);
+      alert('Erro ao alterar valores em massa: ' + (err?.message || 'Erro inesperado'));
+    }
+  };
+
+  // ---- Disponibilidade do produto (item sazonal: congelar/descongelar) ----
+  const handleToggleProductAvailability = async (product: Product) => {
+    const makeUnavailable = (product as any).available_for_sale !== false; // hoje disponível -> vai congelar
+    try {
+      const { error } = await supabase
+        .from('products')
+        .update({ available_for_sale: !makeUnavailable })
+        .eq('id', product.id);
+      if (error) throw error;
+
+      // Ao congelar um item sazonal, congela também as demandas pendentes dele
+      if (makeUnavailable) {
+        await supabase
+          .from('lojinha_demands')
+          .update({ frozen: true })
+          .eq('product_id', product.id)
+          .neq('status', 'completed');
+      } else {
+        await supabase
+          .from('lojinha_demands')
+          .update({ frozen: false })
+          .eq('product_id', product.id);
+      }
+      fetchData();
+    } catch (err: any) {
+      console.error(err);
+      alert('Erro ao alterar disponibilidade do produto: ' + (err?.message || 'Erro inesperado') + '\n\nSe falar em coluna inexistente, rode o SQL (PARTE 4).');
+    }
+  };
+
+  // ---- Demandas: ciência, confirmação de compra e congelar ----
+  const handleAcknowledgeDemand = async (demand: any) => {
+    try {
+      const { error } = await supabase
+        .from('lojinha_demands')
+        .update({ acknowledged_by: profile?.display_name || 'Responsável', acknowledged_at: new Date().toISOString() })
+        .eq('id', demand.id);
+      if (error) throw error;
+      fetchData();
+    } catch (err: any) {
+      console.error(err);
+      alert('Erro ao confirmar ciência: ' + (err?.message || '') + '\n\nSe falar em coluna inexistente, rode o SQL (PARTE 4).');
+    }
+  };
+
+  const handleConfirmPurchase = async (demand: any) => {
+    if (!window.confirm('Confirmar a COMPRA deste item? A demanda será concluída e sairá dos alertas.')) return;
+    try {
+      const { error } = await supabase
+        .from('lojinha_demands')
+        .update({
+          status: 'completed',
+          purchased_by: profile?.display_name || 'Responsável',
+          purchased_at: new Date().toISOString()
+        })
+        .eq('id', demand.id);
+      if (error) throw error;
+      fetchData();
+      setIsDemandDetailsModalOpen(false);
+    } catch (err: any) {
+      console.error(err);
+      alert('Erro ao confirmar compra: ' + (err?.message || ''));
+    }
+  };
+
+  const handleToggleFreezeDemand = async (demand: any) => {
+    const willFreeze = !demand.frozen;
+    try {
+      const { error } = await supabase
+        .from('lojinha_demands')
+        .update({
+          frozen: willFreeze,
+          frozen_by: willFreeze ? (profile?.display_name || 'Responsável') : null,
+          frozen_at: willFreeze ? new Date().toISOString() : null
+        })
+        .eq('id', demand.id);
+      if (error) throw error;
+      fetchData();
+      setIsDemandDetailsModalOpen(false);
+    } catch (err: any) {
+      console.error(err);
+      alert('Erro ao congelar/descongelar a demanda: ' + (err?.message || '') + '\n\nSe falar em coluna inexistente, rode o SQL (PARTE 4).');
+    }
+  };
+
+  // ---- Pedidos de doação (chefe cria -> lojinha realiza) ----
+  const handleCreateDonationRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newDonationReq.youth_name.trim()) { alert('Informe o nome do Jovem.'); return; }
+    if (!newDonationReq.product_id) { alert('Selecione o item a ser doado.'); return; }
+    const prod = products.find(p => p.id === newDonationReq.product_id);
+    try {
+      const { error } = await supabase.from('lojinha_donation_requests').insert([{
+        youth_name: newDonationReq.youth_name.trim(),
+        product_id: newDonationReq.product_id,
+        item_name: prod ? `${prod.name}${prod.size ? ` (${prod.size})` : ''}` : null,
+        quantity: Number(newDonationReq.quantity) || 1,
+        status: 'pending',
+        requested_by: profile?.display_name,
+        requester_id: profile?.id,
+        notes: newDonationReq.notes
+      }]);
+      if (error) throw error;
+      setIsDonationReqModalOpen(false);
+      setNewDonationReq({ youth_name: '', product_id: '', quantity: 1, notes: '' });
+      fetchData();
+      alert('Pedido de doação criado! A equipe da lojinha verá a tarefa em Vendas → Fiados & Doações.');
+    } catch (err: any) {
+      console.error(err);
+      alert('Erro ao criar pedido de doação: ' + (err?.message || '') + '\n\nSe falar em tabela inexistente, rode o SQL (PARTE 4).');
+    }
+  };
+
+  const handleFulfillDonationRequest = async (req: any) => {
+    const prod = products.find(p => p.id === req.product_id);
+    if (!prod) { alert('Produto do pedido não encontrado no estoque atual.'); return; }
+    const qty = Number(req.quantity) || 1;
+    if (!window.confirm(`Confirmar a doação de ${qty}x ${prod.name}${prod.size ? ` (${prod.size})` : ''} para ${req.youth_name}? O item sairá do estoque.`)) return;
+    try {
+      // Movimentação de estoque (doação) — grava antes de mexer no estoque
+      const { error: txErr } = await supabase.from('stock_transactions').insert([{
+        product_id: prod.id,
+        type: 'exit',
+        quantity: qty,
+        user_id: profile?.id,
+        sale_type: 'donation',
+        notes: `Doação (pedido do chefe ${req.requested_by || '-'}) — Jovem: ${req.youth_name}`
+      }]);
+      if (txErr) throw txErr;
+
+      const { data: dbProd } = await supabase.from('products').select('stock').eq('id', prod.id).single();
+      const currentStock = Number(dbProd?.stock) || 0;
+      await supabase.from('products').update({ stock: Math.max(0, currentStock - qty) }).eq('id', prod.id);
+
+      // Registro da doação
+      await supabase.from('lojinha_special_sales').insert([{
+        reference: `DOA-${Date.now().toString().slice(-6)}`,
+        sale_type: 'donation',
+        total_amount: (prod.sale_price || prod.price || 0) * qty,
+        items: [{ name: prod.name, size: prod.size || null, quantity: qty, price: prod.sale_price || prod.price || 0 }],
+        youth_name: req.youth_name,
+        approver: req.requested_by,
+        user_id: profile?.id,
+        user_name: profile?.display_name,
+        notes: `Doação a partir de pedido do chefe ${req.requested_by || '-'}`
+      }]);
+
+      // Marca o pedido como atendido
+      const { error: updErr } = await supabase.from('lojinha_donation_requests')
+        .update({ status: 'fulfilled', fulfilled_by: profile?.display_name, fulfilled_at: new Date().toISOString() })
+        .eq('id', req.id);
+      if (updErr) throw updErr;
+
+      fetchData();
+      alert('Doação realizada e pedido concluído!');
+    } catch (err: any) {
+      console.error(err);
+      alert('Erro ao realizar a doação: ' + (err?.message || 'Erro inesperado'));
+    }
+  };
+
+  const handleCancelDonationRequest = async (req: any) => {
+    if (!window.confirm('Cancelar este pedido de doação?')) return;
+    try {
+      const { error } = await supabase.from('lojinha_donation_requests').update({ status: 'cancelled' }).eq('id', req.id);
+      if (error) throw error;
+      fetchData();
+    } catch (err: any) {
+      console.error(err);
+      alert('Erro ao cancelar o pedido: ' + (err?.message || ''));
+    }
+  };
+
+  // ---- WhatsApp (aprovação de fiado) ----
+  const buildWaLink = (phone: string, message: string) => {
+    const digits = (phone || '').replace(/\D/g, '');
+    return `https://wa.me/${digits}?text=${encodeURIComponent(message)}`;
+  };
+
+  const fiadoApprovalMessage = (sale: any) =>
+    `*Aprovação de FIADO — Lojinha 207*\n\n` +
+    `Chefe: ${sale?.chefe_name || '-'}\n` +
+    `Valor: R$ ${Number(sale?.total_amount || 0).toFixed(2)}\n` +
+    `Vencimento: ${sale?.due_date ? format(new Date(sale.due_date + 'T00:00:00'), 'dd/MM/yyyy') : '-'}\n` +
+    `Itens: ${Array.isArray(sale?.items) ? sale.items.map((i: any) => `${i.quantity}x ${i.name}`).join(', ') : '-'}\n\n` +
+    `Por favor, confirme a aprovação.`;
+
   useEffect(() => {
     if (!user || authLoading) return;
 
@@ -581,12 +833,18 @@ const Lojinha: React.FC = () => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'lojinha_stock_checks' }, () => fetchData())
       .subscribe();
 
+    const donationRequestsSubscription = supabase
+      .channel('donation_requests_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'lojinha_donation_requests' }, () => fetchData())
+      .subscribe();
+
     return () => {
       supabase.removeChannel(productsSubscription);
       supabase.removeChannel(transactionsSubscription);
       supabase.removeChannel(demandsSubscription);
       supabase.removeChannel(specialSalesSubscription);
       supabase.removeChannel(stockChecksSubscription);
+      supabase.removeChannel(donationRequestsSubscription);
     };
   }, [user, authLoading]);
 
@@ -641,6 +899,13 @@ const Lojinha: React.FC = () => {
       .select('*')
       .order('created_at', { ascending: false });
     if (checks) setStockChecks(checks);
+
+    // Pedidos de doação (criados pelos chefes). Tabela pode não existir ainda.
+    const { data: reqs } = await supabase
+      .from('lojinha_donation_requests')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (reqs) setDonationRequests(reqs);
   };
 
   const handleAddProduct = async (e: React.FormEvent) => {
@@ -933,7 +1198,8 @@ const Lojinha: React.FC = () => {
       }
 
       // Demanda automática: se o estoque ficar <= mínimo, cria demanda de reposição
-      if (stockAction === 'exit' && newStock <= (Number(selectedProduct.min_stock) || 0)) {
+      // (itens sazonais/congelados não geram demanda)
+      if (stockAction === 'exit' && selectedProduct.available_for_sale !== false && newStock <= (Number(selectedProduct.min_stock) || 0)) {
         const { error: demandError } = await supabase
           .from('lojinha_demands')
           .insert([{
@@ -1002,6 +1268,7 @@ const Lojinha: React.FC = () => {
   const openFiadosTotal = fiadoSales
     .filter(s => !s.paid)
     .reduce((acc, s) => acc + Number(s.total_amount || 0), 0);
+  const pendingDonationRequests = donationRequests.filter(r => r.status === 'pending');
 
   // Conferência de estoque: obrigatória a cada 15 dias
   const lastStockCheck = stockChecks[0];
@@ -1293,6 +1560,24 @@ const Lojinha: React.FC = () => {
               <BarcodeIcon size={18} className="mr-2" />
               Imprimir Etiquetas {selectedProductIds.size > 0 && `(${selectedProductIds.size})`}
             </button>
+            <button
+              onClick={() => {
+                if (selectedProductIds.size === 0) {
+                  alert('Selecione ao menos um produto (marque as caixinhas) para editar os valores em massa.');
+                  return;
+                }
+                const first = products.find(p => selectedProductIds.has(p.id));
+                setBulkPurchasePrice(Number(first?.purchase_price) || 0);
+                setBulkSalePrice(Number(first?.sale_price) || Number(first?.price) || 0);
+                setBulkApplyPurchase(false);
+                setBulkApplySale(true);
+                setIsBulkEditOpen(true);
+              }}
+              className="flex items-center justify-center px-4 py-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg font-medium transition-colors whitespace-nowrap"
+            >
+              <DollarSign size={18} className="mr-2" />
+              Editar valores {selectedProductIds.size > 0 && `(${selectedProductIds.size})`}
+            </button>
           </div>
 
           {/* Product Table */}
@@ -1331,7 +1616,12 @@ const Lojinha: React.FC = () => {
                       />
                     </td>
                     <td className="px-6 py-4">
-                      <p className="font-medium text-gray-900">{product.name}{product.size ? ` (${product.size})` : ''}</p>
+                      <p className="font-medium text-gray-900">
+                        {product.name}{product.size ? ` (${product.size})` : ''}
+                        {product.available_for_sale === false && (
+                          <span className="ml-2 px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-cyan-100 text-cyan-700 align-middle">Indisponível (sazonal)</span>
+                        )}
+                      </p>
                       <p className="text-xs text-gray-500">{product.category}</p>
                     </td>
                     <td className="px-6 py-4">
@@ -1410,7 +1700,7 @@ const Lojinha: React.FC = () => {
                         >
                           <ArrowUpRight size={18} />
                         </button>
-                        <button 
+                        <button
                           onClick={() => {
                             setSelectedProductIds(new Set([product.id]));
                             setPrintQuantities({ [product.id]: product.stock > 0 ? 1 : 0 });
@@ -1420,6 +1710,16 @@ const Lojinha: React.FC = () => {
                           title="Imprimir Etiqueta"
                         >
                           <BarcodeIcon size={18} />
+                        </button>
+                        <button
+                          onClick={() => handleToggleProductAvailability(product)}
+                          className={cn(
+                            "p-2 rounded-lg",
+                            product.available_for_sale === false ? "text-cyan-600 bg-cyan-50 hover:bg-cyan-100" : "text-gray-400 hover:bg-cyan-50 hover:text-cyan-600"
+                          )}
+                          title={product.available_for_sale === false ? "Descongelar (voltar a vender)" : "Congelar (item sazonal / indisponível)"}
+                        >
+                          <Snowflake size={18} />
                         </button>
                       </div>
                     </td>
@@ -1775,17 +2075,22 @@ const Lojinha: React.FC = () => {
                     .filter(p => p.name.toLowerCase().includes(posSearchTerm.toLowerCase()) || (p.barcode && p.barcode.includes(posSearchTerm)))
                     .map(product => {
                       const inStock = product.stock > 0;
+                      const unavailable = product.available_for_sale === false;
                       return (
                         <div
                           key={product.id}
                           onClick={() => addToCart(product)}
                           className={cn(
-                            "flex items-center justify-between p-3 border rounded-xl cursor-pointer hover:border-blue-400 transition-all",
-                            inStock ? "border-gray-100 bg-gray-50/50" : "border-red-100 bg-red-50/20"
+                            "flex items-center justify-between p-3 border rounded-xl transition-all",
+                            unavailable ? "border-cyan-100 bg-cyan-50/30 opacity-70 cursor-not-allowed"
+                              : "cursor-pointer hover:border-blue-400 " + (inStock ? "border-gray-100 bg-gray-50/50" : "border-red-100 bg-red-50/20")
                           )}
                         >
                           <div>
-                            <p className="text-sm font-bold text-gray-900">{product.name}{product.size ? ` (${product.size})` : ''}</p>
+                            <p className="text-sm font-bold text-gray-900">
+                              {product.name}{product.size ? ` (${product.size})` : ''}
+                              {unavailable && <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] font-black uppercase bg-cyan-100 text-cyan-700">Indisponível</span>}
+                            </p>
                             <div className="flex items-center gap-3 mt-1">
                               <span className="text-[10px] text-gray-400 font-mono">Barras: {product.barcode || 'N/A'}</span>
                               <span className={cn(
@@ -2041,6 +2346,53 @@ const Lojinha: React.FC = () => {
 
           {activePdvTab === 'fiados' && (
             <div className="space-y-6">
+              {/* Pedidos de Doação (chefes criam -> lojinha realiza) */}
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                <div className="p-6 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-bold flex items-center gap-2"><Gift size={18} className="text-emerald-500" /> Pedidos de Doação</h3>
+                    <p className="text-xs text-gray-500">Chefes (Édson/Sandra) criam o pedido; a equipe da lojinha realiza a doação.</p>
+                  </div>
+                  <button
+                    onClick={() => setIsDonationReqModalOpen(true)}
+                    className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-bold hover:bg-emerald-700 flex items-center gap-2 self-start"
+                  >
+                    <Plus size={16} /> Novo pedido
+                  </button>
+                </div>
+                {pendingDonationRequests.length === 0 ? (
+                  <div className="p-6 text-center text-sm text-gray-400">Nenhum pedido de doação pendente.</div>
+                ) : (
+                  <div className="divide-y divide-gray-100">
+                    {pendingDonationRequests.map((req) => (
+                      <div key={req.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-bold text-gray-900">{req.quantity}x {req.item_name || 'Item'} → {req.youth_name}</p>
+                          <p className="text-[11px] text-gray-400">
+                            Pedido por {req.requested_by || '-'}{req.created_at ? ` em ${format(new Date(req.created_at), 'dd/MM/yyyy')}` : ''}
+                            {req.notes ? ` • ${req.notes}` : ''}
+                          </p>
+                        </div>
+                        <div className="flex gap-2 self-start sm:self-auto">
+                          <button
+                            onClick={() => handleFulfillDonationRequest(req)}
+                            className="px-3 py-1.5 bg-green-600 text-white hover:bg-green-700 rounded-lg text-[11px] font-bold inline-flex items-center gap-1.5"
+                          >
+                            <Check size={13} /> Realizar doação
+                          </button>
+                          <button
+                            onClick={() => handleCancelDonationRequest(req)}
+                            className="px-3 py-1.5 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-lg text-[11px] font-bold"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               {/* Resumo */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
@@ -2674,7 +3026,18 @@ const Lojinha: React.FC = () => {
                     </span>
                   </div>
                   <h4 className="font-bold text-gray-900 mb-2">{demand.title}</h4>
-                  <p className="text-sm text-gray-500 mb-4 line-clamp-2">{demand.description}</p>
+                  <p className="text-sm text-gray-500 mb-3 line-clamp-2">{demand.description}</p>
+                  <div className="flex flex-wrap gap-1.5 mb-3">
+                    {demand.acknowledged_by && (
+                      <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-blue-100 text-blue-700">{demand.acknowledged_by} leu</span>
+                    )}
+                    {demand.purchased_by && (
+                      <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-green-100 text-green-700">{demand.purchased_by} comprou</span>
+                    )}
+                    {demand.frozen && (
+                      <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-cyan-100 text-cyan-700">{demand.frozen_by ? `${demand.frozen_by} congelou` : 'Congelada'}</span>
+                    )}
+                  </div>
                   <div className="flex items-center justify-between pt-4 border-t border-gray-50">
                     <span className="text-xs font-medium text-gray-400">Status: {displayStatus}</span>
                     <button 
@@ -3119,6 +3482,59 @@ const Lojinha: React.FC = () => {
               <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{selectedDemand.description}</p>
             </div>
 
+            {/* Ciência / Compra / Congelar (Édson e equipe) */}
+            <div className="mb-5 p-4 bg-slate-50 rounded-xl border border-slate-100 space-y-3">
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                {selectedDemand.acknowledged_by ? (
+                  <span className="px-2 py-1 rounded-full bg-blue-100 text-blue-700 font-bold">
+                    {selectedDemand.acknowledged_by} marcou como Lido{selectedDemand.acknowledged_at ? ` • ${format(new Date(selectedDemand.acknowledged_at), 'dd/MM HH:mm')}` : ''}
+                  </span>
+                ) : (
+                  <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-500 font-bold">Ainda não lido</span>
+                )}
+                {selectedDemand.purchased_by && (
+                  <span className="px-2 py-1 rounded-full bg-green-100 text-green-700 font-bold">
+                    {selectedDemand.purchased_by} marcou como Comprado{selectedDemand.purchased_at ? ` • ${format(new Date(selectedDemand.purchased_at), 'dd/MM')}` : ''}
+                  </span>
+                )}
+                {selectedDemand.frozen && (
+                  <span className="px-2 py-1 rounded-full bg-cyan-100 text-cyan-700 font-bold">
+                    {selectedDemand.frozen_by ? `${selectedDemand.frozen_by} congelou` : 'Congelada (sazonal)'}
+                  </span>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {!selectedDemand.acknowledged_by && (
+                  <button
+                    type="button"
+                    onClick={() => handleAcknowledgeDemand(selectedDemand)}
+                    className="px-3 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg text-xs font-bold flex items-center gap-1.5"
+                  >
+                    <Eye size={14} /> Marcar como lido
+                  </button>
+                )}
+                {selectedDemand.status !== 'completed' && (
+                  <button
+                    type="button"
+                    onClick={() => handleConfirmPurchase(selectedDemand)}
+                    className="px-3 py-2 bg-green-600 text-white hover:bg-green-700 rounded-lg text-xs font-bold flex items-center gap-1.5"
+                  >
+                    <ShoppingCart size={14} /> Confirmar compra
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => handleToggleFreezeDemand(selectedDemand)}
+                  className={cn(
+                    "px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5",
+                    selectedDemand.frozen ? "bg-cyan-600 text-white hover:bg-cyan-700" : "bg-cyan-50 text-cyan-700 hover:bg-cyan-100"
+                  )}
+                >
+                  <Snowflake size={14} /> {selectedDemand.frozen ? 'Descongelar' : 'Congelar (sazonal)'}
+                </button>
+              </div>
+            </div>
+
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">Alterar Status</label>
@@ -3161,6 +3577,153 @@ const Lojinha: React.FC = () => {
                   Fechar
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Edição de valores em massa */}
+      {isBulkEditOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8">
+            <h2 className="text-xl font-bold mb-1">Editar valores em massa</h2>
+            <p className="text-sm text-gray-500 mb-6">
+              Aplica os valores marcados a <strong>{selectedProductIds.size}</strong> produto(s) selecionado(s).
+              Útil quando itens iguais (ex.: blusões de vários tamanhos) têm o mesmo preço.
+            </p>
+            <div className="space-y-4">
+              <div className="p-3 rounded-xl border border-gray-200">
+                <label className="flex items-center gap-2 mb-2 font-semibold text-sm text-gray-700">
+                  <input type="checkbox" checked={bulkApplyPurchase} onChange={(e) => setBulkApplyPurchase(e.target.checked)} className="rounded text-indigo-600" />
+                  Alterar Valor de Compra (custo)
+                </label>
+                <input
+                  type="number" step="0.01" disabled={!bulkApplyPurchase}
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg disabled:bg-gray-50 disabled:text-gray-400"
+                  value={bulkPurchasePrice || ''}
+                  onChange={(e) => setBulkPurchasePrice(parseFloat(e.target.value) || 0)}
+                  placeholder="R$ 0,00"
+                />
+              </div>
+              <div className="p-3 rounded-xl border border-gray-200">
+                <label className="flex items-center gap-2 mb-2 font-semibold text-sm text-gray-700">
+                  <input type="checkbox" checked={bulkApplySale} onChange={(e) => setBulkApplySale(e.target.checked)} className="rounded text-indigo-600" />
+                  Alterar Valor de Venda
+                </label>
+                <input
+                  type="number" step="0.01" disabled={!bulkApplySale}
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg disabled:bg-gray-50 disabled:text-gray-400"
+                  value={bulkSalePrice || ''}
+                  onChange={(e) => setBulkSalePrice(parseFloat(e.target.value) || 0)}
+                  placeholder="R$ 0,00"
+                />
+              </div>
+            </div>
+            <div className="flex gap-3 pt-6">
+              <button onClick={() => setIsBulkEditOpen(false)} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm font-medium">Cancelar</button>
+              <button onClick={handleBulkPriceUpdate} className="flex-1 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700">Aplicar a todos</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Novo pedido de doação (chefe) */}
+      {isDonationReqModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8">
+            <h2 className="text-xl font-bold mb-1">Novo pedido de doação</h2>
+            <p className="text-sm text-gray-500 mb-6">O pedido vira uma tarefa para a equipe da lojinha realizar a doação.</p>
+            <form onSubmit={handleCreateDonationRequest} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nome do Jovem</label>
+                <input required type="text" className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                  value={newDonationReq.youth_name} onChange={(e) => setNewDonationReq({ ...newDonationReq, youth_name: e.target.value })} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Item a doar</label>
+                <select required className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                  value={newDonationReq.product_id} onChange={(e) => setNewDonationReq({ ...newDonationReq, product_id: e.target.value })}>
+                  <option value="">Selecione o produto...</option>
+                  {products.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}{p.size ? ` (${p.size})` : ''} — estoque: {p.stock}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Quantidade</label>
+                <input type="number" min="1" className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                  value={newDonationReq.quantity} onChange={(e) => setNewDonationReq({ ...newDonationReq, quantity: parseInt(e.target.value) || 1 })} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Observação (opcional)</label>
+                <textarea rows={2} className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                  value={newDonationReq.notes} onChange={(e) => setNewDonationReq({ ...newDonationReq, notes: e.target.value })} />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => setIsDonationReqModalOpen(false)} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm font-medium">Cancelar</button>
+                <button type="submit" className="flex-1 py-2 bg-emerald-600 text-white rounded-lg text-sm font-bold hover:bg-emerald-700">Criar pedido</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Aprovação de fiado via WhatsApp */}
+      {pendingFiadoApproval && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8">
+            <div className="flex items-center gap-3 mb-2">
+              <div className="p-2 bg-amber-100 text-amber-600 rounded-lg"><Clock size={22} /></div>
+              <h2 className="text-xl font-bold">Fiado registrado — enviar p/ aprovação</h2>
+            </div>
+            <p className="text-sm text-gray-500 mb-4">
+              Envie a solicitação de aprovação para o Édson e a Juliana pelo WhatsApp.
+            </p>
+            <div className="p-3 bg-amber-50/50 border border-amber-100 rounded-xl text-sm mb-4">
+              <p><strong>Chefe:</strong> {pendingFiadoApproval.chefe_name}</p>
+              <p><strong>Valor:</strong> R$ {Number(pendingFiadoApproval.total_amount || 0).toFixed(2)}</p>
+              <p><strong>Vencimento:</strong> {pendingFiadoApproval.due_date ? format(new Date(pendingFiadoApproval.due_date + 'T00:00:00'), 'dd/MM/yyyy') : '-'}</p>
+            </div>
+
+            {/* Config dos números (salvos no navegador) */}
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <div>
+                <label className="block text-[11px] font-bold text-gray-500 uppercase mb-1">WhatsApp do Édson</label>
+                <input type="text" placeholder="Ex: 5511999999999"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm"
+                  value={waEdson}
+                  onChange={(e) => { setWaEdson(e.target.value); localStorage.setItem('wa_edson', e.target.value); }} />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-gray-500 uppercase mb-1">WhatsApp da Juliana</label>
+                <input type="text" placeholder="Ex: 5511988888888"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm"
+                  value={waJuliana}
+                  onChange={(e) => { setWaJuliana(e.target.value); localStorage.setItem('wa_juliana', e.target.value); }} />
+              </div>
+            </div>
+            <p className="text-[11px] text-gray-400 mb-4">Use o formato com DDI + DDD (ex.: 55 11 9XXXXXXXX). Os números ficam salvos neste navegador.</p>
+
+            <div className="flex flex-col gap-2">
+              <a
+                href={waEdson ? buildWaLink(waEdson, fiadoApprovalMessage(pendingFiadoApproval)) : undefined}
+                target="_blank" rel="noreferrer"
+                onClick={(e) => { if (!waEdson) { e.preventDefault(); alert('Informe o WhatsApp do Édson.'); } }}
+                className="w-full py-2.5 bg-green-600 text-white rounded-xl font-bold hover:bg-green-700 flex items-center justify-center gap-2"
+              >
+                <MessageCircle size={18} /> Enviar p/ Édson (WhatsApp)
+              </a>
+              <a
+                href={waJuliana ? buildWaLink(waJuliana, fiadoApprovalMessage(pendingFiadoApproval)) : undefined}
+                target="_blank" rel="noreferrer"
+                onClick={(e) => { if (!waJuliana) { e.preventDefault(); alert('Informe o WhatsApp da Juliana.'); } }}
+                className="w-full py-2.5 bg-green-600 text-white rounded-xl font-bold hover:bg-green-700 flex items-center justify-center gap-2"
+              >
+                <MessageCircle size={18} /> Enviar p/ Juliana (WhatsApp)
+              </a>
+              <button onClick={() => setPendingFiadoApproval(null)} className="w-full py-2 text-gray-500 hover:bg-gray-50 rounded-xl text-sm font-medium mt-1">
+                Fechar
+              </button>
             </div>
           </div>
         </div>

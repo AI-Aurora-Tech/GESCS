@@ -150,20 +150,21 @@ async function startServer() {
   app.delete("/api/users/:uid", async (req, res) => {
     const { uid } = req.params;
     try {
-      const { error: deleteAuthError } = await supabaseAdmin.auth.admin.deleteUser(uid);
-      if (deleteAuthError) throw deleteAuthError;
-
+      // Remove o perfil ANTES de excluir do Auth (evita "Database error deleting
+      // user" causado pela FK profiles.id -> auth.users.id).
       const { error: deleteProfileError } = await supabaseAdmin
         .from("profiles")
         .delete()
         .eq("id", uid);
-      
       if (deleteProfileError) throw deleteProfileError;
+
+      const { error: deleteAuthError } = await supabaseAdmin.auth.admin.deleteUser(uid);
+      if (deleteAuthError) throw deleteAuthError;
 
       res.json({ success: true });
     } catch (error: any) {
       console.error("Error deleting user:", error);
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: error.message || "Erro ao excluir usuário" });
     }
   });
 
