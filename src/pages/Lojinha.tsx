@@ -146,12 +146,16 @@ const Lojinha: React.FC = () => {
   const [isDonationReqModalOpen, setIsDonationReqModalOpen] = useState(false);
   const [newDonationReq, setNewDonationReq] = useState({ youth_name: '', product_id: '', quantity: 1, notes: '' });
 
-  // Aprovação de fiado via WhatsApp (link pronto)
-  const [waEdson, setWaEdson] = useState(localStorage.getItem('wa_edson') || '');
-  const [waJuliana, setWaJuliana] = useState(localStorage.getItem('wa_juliana') || '');
+  // Aprovação de fiado via WhatsApp (números e link fixos no código)
   const [pendingFiadoApproval, setPendingFiadoApproval] = useState<any | null>(null);
 
   const APPROVERS = ['Édson', 'Sandra'];
+
+  // Contatos de aprovação do fiado (formato DDI+DDD+numero, só dígitos)
+  const WA_EDSON = '5511943862771';    // Chefe Édson: +55 11 94386-2771
+  const WA_JULIANA = '5511999612471';  // Juliana:     +55 11 99961-2471
+  // URL do app (para o link de aprovação no WhatsApp). Troque se o domínio mudar.
+  const APP_URL = 'https://gescs.vercel.app';
 
   const resetSpecialSaleFields = () => {
     setSaleType('normal');
@@ -517,6 +521,26 @@ const Lojinha: React.FC = () => {
     }
   };
 
+  const handleFiadoApproval = async (sale: any, decision: 'approved' | 'denied') => {
+    const label = decision === 'approved' ? 'APROVAR' : 'NEGAR';
+    if (!window.confirm(`${label} o fiado de ${sale.chefe_name} (R$ ${Number(sale.total_amount || 0).toFixed(2)})?`)) return;
+    try {
+      const { error } = await supabase
+        .from('lojinha_special_sales')
+        .update({
+          approval_status: decision,
+          approved_by: profile?.display_name || 'Responsável',
+          approved_at: new Date().toISOString()
+        })
+        .eq('id', sale.id);
+      if (error) throw error;
+      fetchData();
+    } catch (err: any) {
+      console.error(err);
+      alert('Erro ao registrar a decisão: ' + (err?.message || '') + '\n\nSe falar em coluna inexistente, rode o SQL (PARTE 6).');
+    }
+  };
+
   const handleFinalizeConference = async () => {
     const scannedProducts = products.filter(p => (scannedItems[p.barcode] || 0) > 0);
     if (scannedProducts.length === 0) {
@@ -794,13 +818,19 @@ const Lojinha: React.FC = () => {
     return `https://wa.me/${digits}?text=${encodeURIComponent(message)}`;
   };
 
-  const fiadoApprovalMessage = (sale: any) =>
-    `*Aprovação de FIADO — Lojinha 207*\n\n` +
-    `Chefe: ${sale?.chefe_name || '-'}\n` +
-    `Valor: R$ ${Number(sale?.total_amount || 0).toFixed(2)}\n` +
-    `Vencimento: ${sale?.due_date ? format(new Date(sale.due_date + 'T00:00:00'), 'dd/MM/yyyy') : '-'}\n` +
-    `Itens: ${Array.isArray(sale?.items) ? sale.items.map((i: any) => `${i.quantity}x ${i.name}`).join(', ') : '-'}\n\n` +
-    `Por favor, confirme a aprovação.`;
+  const fiadoApprovalMessage = (sale: any) => {
+    const itens = Array.isArray(sale?.items) ? sale.items.map((i: any) => `${i.quantity}x ${i.name}`).join(', ') : '-';
+    const venc = sale?.due_date ? format(new Date(sale.due_date + 'T00:00:00'), 'dd/MM/yyyy') : '-';
+    const link = `${APP_URL}/lojinha#fiados`;
+    return (
+      `Foi solicitada uma venda Fiado, segue os dados:\n` +
+      `${sale?.chefe_name || '-'}\n` +
+      `${itens}\n` +
+      `${venc}\n\n` +
+      `${link}\n\n` +
+      `Obrigado`
+    );
+  };
 
   useEffect(() => {
     if (!user || authLoading) return;
@@ -847,6 +877,14 @@ const Lojinha: React.FC = () => {
       supabase.removeChannel(donationRequestsSubscription);
     };
   }, [user, authLoading]);
+
+  // Link do WhatsApp (#fiados) abre direto a aba Vendas → Fiados & Doações
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.location.hash === '#fiados') {
+      setActiveTab('pagvendas');
+      setActivePdvTab('fiados');
+    }
+  }, []);
 
   const fetchData = async () => {
     const { data: prods } = await supabase.from('products').select('*').order('name');
@@ -2453,15 +2491,47 @@ const Lojinha: React.FC = () => {
                               R$ {Number(sale.total_amount || 0).toFixed(2)}
                             </td>
                             <td className="px-6 py-4 text-center">
-                              {sale.paid ? (
-                                <span className="px-2.5 py-1 bg-green-100 text-green-700 rounded-full text-[10px] font-black uppercase">Pago</span>
-                              ) : isOverdue ? (
-                                <span className="px-2.5 py-1 bg-red-100 text-red-700 rounded-full text-[10px] font-black uppercase">Vencido</span>
-                              ) : (
-                                <span className="px-2.5 py-1 bg-amber-100 text-amber-700 rounded-full text-[10px] font-black uppercase">Em aberto</span>
-                              )}
+                              <div className="flex flex-col items-center gap-1">
+                                {/* Status de pagamento */}
+                                {sale.paid ? (
+                                  <span className="px-2.5 py-1 bg-green-100 text-green-700 rounded-full text-[10px] font-black uppercase">Pago</span>
+                                ) : isOverdue ? (
+                                  <span className="px-2.5 py-1 bg-red-100 text-red-700 rounded-full text-[10px] font-black uppercase">Vencido</span>
+                                ) : (
+                                  <span className="px-2.5 py-1 bg-amber-100 text-amber-700 rounded-full text-[10px] font-black uppercase">Em aberto</span>
+                                )}
+                                {/* Status de aprovação */}
+                                {(sale.approval_status || 'pending') === 'approved' ? (
+                                  <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-[9px] font-black uppercase">
+                                    Aprovado{sale.approved_by ? `: ${sale.approved_by}` : ''}
+                                  </span>
+                                ) : (sale.approval_status === 'denied') ? (
+                                  <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-[9px] font-black uppercase">
+                                    Negado{sale.approved_by ? `: ${sale.approved_by}` : ''}
+                                  </span>
+                                ) : (
+                                  <span className="px-2 py-0.5 bg-gray-100 text-gray-500 rounded-full text-[9px] font-black uppercase">Aprovação pendente</span>
+                                )}
+                              </div>
                             </td>
                             <td className="px-6 py-4 text-right">
+                              <div className="flex flex-col items-end gap-1.5">
+                                {(sale.approval_status || 'pending') === 'pending' && (
+                                  <div className="flex gap-1.5">
+                                    <button
+                                      onClick={() => handleFiadoApproval(sale, 'approved')}
+                                      className="px-2.5 py-1.5 bg-blue-600 text-white hover:bg-blue-700 rounded-lg text-[11px] font-bold inline-flex items-center gap-1"
+                                    >
+                                      <Check size={12} /> Aprovar
+                                    </button>
+                                    <button
+                                      onClick={() => handleFiadoApproval(sale, 'denied')}
+                                      className="px-2.5 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg text-[11px] font-bold inline-flex items-center gap-1"
+                                    >
+                                      <X size={12} /> Negar
+                                    </button>
+                                  </div>
+                                )}
                               {!sale.paid && (
                                 <button
                                   onClick={() => handleMarkFiadoPaid(sale)}
@@ -2475,6 +2545,7 @@ const Lojinha: React.FC = () => {
                                   em {format(new Date(sale.paid_at), 'dd/MM/yyyy')}
                                 </span>
                               )}
+                              </div>
                             </td>
                           </tr>
                         );
@@ -3685,38 +3756,19 @@ const Lojinha: React.FC = () => {
               <p><strong>Vencimento:</strong> {pendingFiadoApproval.due_date ? format(new Date(pendingFiadoApproval.due_date + 'T00:00:00'), 'dd/MM/yyyy') : '-'}</p>
             </div>
 
-            {/* Config dos números (salvos no navegador) */}
-            <div className="grid grid-cols-2 gap-3 mb-4">
-              <div>
-                <label className="block text-[11px] font-bold text-gray-500 uppercase mb-1">WhatsApp do Édson</label>
-                <input type="text" placeholder="Ex: 5511999999999"
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm"
-                  value={waEdson}
-                  onChange={(e) => { setWaEdson(e.target.value); localStorage.setItem('wa_edson', e.target.value); }} />
-              </div>
-              <div>
-                <label className="block text-[11px] font-bold text-gray-500 uppercase mb-1">WhatsApp da Juliana</label>
-                <input type="text" placeholder="Ex: 5511988888888"
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm"
-                  value={waJuliana}
-                  onChange={(e) => { setWaJuliana(e.target.value); localStorage.setItem('wa_juliana', e.target.value); }} />
-              </div>
-            </div>
-            <p className="text-[11px] text-gray-400 mb-4">Use o formato com DDI + DDD (ex.: 55 11 9XXXXXXXX). Os números ficam salvos neste navegador.</p>
+            <p className="text-[11px] text-gray-400 mb-4">Os números do Édson e da Juliana já estão configurados. É só clicar para enviar.</p>
 
             <div className="flex flex-col gap-2">
               <a
-                href={waEdson ? buildWaLink(waEdson, fiadoApprovalMessage(pendingFiadoApproval)) : undefined}
+                href={buildWaLink(WA_EDSON, fiadoApprovalMessage(pendingFiadoApproval))}
                 target="_blank" rel="noreferrer"
-                onClick={(e) => { if (!waEdson) { e.preventDefault(); alert('Informe o WhatsApp do Édson.'); } }}
                 className="w-full py-2.5 bg-green-600 text-white rounded-xl font-bold hover:bg-green-700 flex items-center justify-center gap-2"
               >
-                <MessageCircle size={18} /> Enviar p/ Édson (WhatsApp)
+                <MessageCircle size={18} /> Enviar p/ Chefe Édson (WhatsApp)
               </a>
               <a
-                href={waJuliana ? buildWaLink(waJuliana, fiadoApprovalMessage(pendingFiadoApproval)) : undefined}
+                href={buildWaLink(WA_JULIANA, fiadoApprovalMessage(pendingFiadoApproval))}
                 target="_blank" rel="noreferrer"
-                onClick={(e) => { if (!waJuliana) { e.preventDefault(); alert('Informe o WhatsApp da Juliana.'); } }}
                 className="w-full py-2.5 bg-green-600 text-white rounded-xl font-bold hover:bg-green-700 flex items-center justify-center gap-2"
               >
                 <MessageCircle size={18} /> Enviar p/ Juliana (WhatsApp)
