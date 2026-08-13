@@ -296,3 +296,12 @@ END $$;
 ALTER TABLE public.lojinha_demands
   ADD COLUMN IF NOT EXISTS frozen_by text,
   ADD COLUMN IF NOT EXISTS frozen_at timestamptz;
+
+
+-- ============================================================================
+-- PARTE 6 — Aprovação/negação do fiado (Édson/Juliana). Idempotente.
+-- ============================================================================
+ALTER TABLE public.lojinha_special_sales
+  ADD COLUMN IF NOT EXISTS approval_status text NOT NULL DEFAULT 'pending',
+  ADD COLUMN IF NOT EXISTS approved_by text,
+  ADD COLUMN IF NOT EXISTS approved_at timestamptz;
