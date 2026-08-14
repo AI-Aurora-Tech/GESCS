@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Plus, 
   Search, 
@@ -78,6 +78,9 @@ const Lojinha: React.FC = () => {
   const [quantity, setQuantity] = useState(1);
   const [scannedItems, setScannedItems] = useState<Record<string, number>>({});
   const [scanInput, setScanInput] = useState('');
+  const scanInputRef = useRef<HTMLInputElement>(null);
+  const scanTimerRef = useRef<any>(null);
+  const [scanFeedback, setScanFeedback] = useState<{ type: 'success' | 'error' | ''; message: string }>({ type: '', message: '' });
   const [isEditing, setIsEditing] = useState(false);
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [printQuantities, setPrintQuantities] = useState<Record<string, number>>({});
@@ -886,6 +889,14 @@ const Lojinha: React.FC = () => {
     }
   }, []);
 
+  // Ao abrir a Conferência, foca o campo de leitura (para o leitor USB funcionar)
+  useEffect(() => {
+    if (activeTab === 'conferencia') {
+      const t = setTimeout(() => scanInputRef.current?.focus(), 120);
+      return () => clearTimeout(t);
+    }
+  }, [activeTab]);
+
   const fetchData = async () => {
     const { data: prods } = await supabase.from('products').select('*').order('name');
     if (prods) setProducts(prods);
@@ -1262,20 +1273,39 @@ const Lojinha: React.FC = () => {
     }
   };
 
-  const handleScan = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!scanInput) return;
-    
-    const product = products.find(p => p.barcode === scanInput);
+  // Processa uma leitura (conta 1 no item). Usado tanto pelo Enter do leitor
+  // quanto pela detecção automática (leitores sem "Enter" no fim).
+  const doScan = (rawCode: string) => {
+    const code = (rawCode || '').trim();
+    if (scanTimerRef.current) { clearTimeout(scanTimerRef.current); scanTimerRef.current = null; }
+    if (!code) return;
+
+    const product = products.find(p => p.barcode === code);
     if (product) {
-      setScannedItems(prev => ({
-        ...prev,
-        [product.barcode]: (prev[product.barcode] || 0) + 1
-      }));
+      const novaContagem = (scannedItems[product.barcode] || 0) + 1;
+      setScannedItems(prev => ({ ...prev, [product.barcode]: (prev[product.barcode] || 0) + 1 }));
+      setScanFeedback({ type: 'success', message: `✓ ${product.name}${product.size ? ` (${product.size})` : ''} — contado: ${novaContagem}` });
     } else {
-      alert('Produto não encontrado!');
+      setScanFeedback({ type: 'error', message: `✗ Código não encontrado: "${code}". Verifique se o produto está cadastrado com esse código de barras.` });
     }
     setScanInput('');
+    // Mantém o foco no campo para a próxima leitura do leitor USB
+    setTimeout(() => scanInputRef.current?.focus(), 0);
+  };
+
+  const handleScan = (e: React.FormEvent) => {
+    e.preventDefault();
+    doScan(scanInput);
+  };
+
+  // Detecção automática: leitor USB "digita" rápido; ao parar, registra sozinho.
+  const handleScanChange = (value: string) => {
+    setScanInput(value);
+    if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
+    const v = value.trim();
+    if (v.length >= 6) {
+      scanTimerRef.current = setTimeout(() => doScan(v), 120);
+    }
   };
 
   const filteredProducts = products.filter(p => 
@@ -1774,20 +1804,36 @@ const Lojinha: React.FC = () => {
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
             <h2 className="text-xl font-bold mb-4">Conferência de Estoque (Balanço)</h2>
-            <p className="text-gray-500 mb-6">
-              Escaneie os códigos de barras dos produtos físicos. O sistema comparará com o estoque atual.
+            <p className="text-gray-500 mb-4">
+              Escaneie os códigos de barras dos produtos físicos com o leitor USB. Cada leitura é
+              <strong> contada automaticamente</strong> (não precisa apertar Registrar). O estoque só é
+              ajustado ao clicar em <strong>"Finalizar e Corrigir Estoque"</strong>.
             </p>
-            
-            <form onSubmit={handleScan} className="flex flex-col md:flex-row gap-4 mb-8">
+
+            <form onSubmit={handleScan} className="flex flex-col md:flex-row gap-4 mb-3">
               <div className="relative flex-1">
                 <BarcodeIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                <input 
+                <input
+                  ref={scanInputRef}
                   type="text"
                   autoFocus
+                  inputMode="none"
                   placeholder="Escaneie o código de barras aqui..."
                   className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-lg font-medium"
                   value={scanInput}
-                  onChange={(e) => setScanInput(e.target.value)}
+                  onChange={(e) => handleScanChange(e.target.value)}
+                  onBlur={() => {
+                    // Reativa o foco para o leitor continuar funcionando, a menos que
+                    // o usuário tenha clicado num botão/campo ou aberto um modal.
+                    setTimeout(() => {
+                      const el = document.activeElement as HTMLElement | null;
+                      const tag = el?.tagName;
+                      if (activeTab === 'conferencia' && !isStockModalOpen && !isAddModalOpen
+                          && tag !== 'BUTTON' && tag !== 'INPUT' && tag !== 'A' && tag !== 'SELECT' && tag !== 'TEXTAREA') {
+                        scanInputRef.current?.focus();
+                      }
+                    }, 60);
+                  }}
                 />
               </div>
               <button
@@ -1796,7 +1842,25 @@ const Lojinha: React.FC = () => {
               >
                 Registrar
               </button>
+              <button
+                type="button"
+                onClick={() => scanInputRef.current?.focus()}
+                title="Reativar o leitor (colocar o cursor no campo)"
+                className="px-4 py-3 bg-slate-100 text-slate-700 rounded-lg font-bold hover:bg-slate-200 transition-colors whitespace-nowrap"
+              >
+                Ativar leitor
+              </button>
             </form>
+
+            {/* Feedback da leitura na tela */}
+            <div className="mb-8 min-h-[1.5rem]">
+              {scanFeedback.type === 'success' && (
+                <p className="text-sm font-semibold text-green-700 bg-green-50 border border-green-100 rounded-lg px-3 py-2">{scanFeedback.message}</p>
+              )}
+              {scanFeedback.type === 'error' && (
+                <p className="text-sm font-semibold text-red-700 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{scanFeedback.message}</p>
+              )}
+            </div>
 
             <div className="overflow-hidden border border-gray-200 rounded-xl">
               <div className="overflow-x-auto">
