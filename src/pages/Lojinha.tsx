@@ -130,9 +130,13 @@ const Lojinha: React.FC = () => {
   // Doação & Fiado states
   const [saleType, setSaleType] = useState<'normal' | 'donation' | 'fiado'>('normal');
   const [donationYouthName, setDonationYouthName] = useState('');
+  const [donationYouthBranch, setDonationYouthBranch] = useState('');
   const [fiadoChefeName, setFiadoChefeName] = useState('');
   const [fiadoDueDate, setFiadoDueDate] = useState('');
+  const [fiadoNotes, setFiadoNotes] = useState('');
   const [saleApprover, setSaleApprover] = useState('');
+
+  const RAMOS = ['Filhote', 'Lobinho', 'Escoteiro', 'Sênior', 'Pioneiro'];
   const [specialSales, setSpecialSales] = useState<any[]>([]);
   const [stockChecks, setStockChecks] = useState<any[]>([]);
   const [finalizingConference, setFinalizingConference] = useState(false);
@@ -147,7 +151,7 @@ const Lojinha: React.FC = () => {
   // Pedidos de doação (criados pelos chefes -> tarefa para a lojinha)
   const [donationRequests, setDonationRequests] = useState<any[]>([]);
   const [isDonationReqModalOpen, setIsDonationReqModalOpen] = useState(false);
-  const [newDonationReq, setNewDonationReq] = useState({ youth_name: '', product_id: '', quantity: 1, notes: '' });
+  const [newDonationReq, setNewDonationReq] = useState({ youth_name: '', youth_branch: '', product_id: '', quantity: 1, notes: '' });
 
   // Aprovação de fiado via WhatsApp (números e link fixos no código)
   const [pendingFiadoApproval, setPendingFiadoApproval] = useState<any | null>(null);
@@ -163,8 +167,10 @@ const Lojinha: React.FC = () => {
   const resetSpecialSaleFields = () => {
     setSaleType('normal');
     setDonationYouthName('');
+    setDonationYouthBranch('');
     setFiadoChefeName('');
     setFiadoDueDate('');
+    setFiadoNotes('');
     setSaleApprover('');
   };
 
@@ -355,10 +361,11 @@ const Lojinha: React.FC = () => {
           total_amount: totalAmount,
           items: cartSnapshot,
           youth_name: donationYouthName,
+          youth_branch: donationYouthBranch || null,
           approver: saleApprover,
           user_id: profile?.id,
           user_name: profile?.display_name,
-          notes: `Doação para o jovem ${donationYouthName} — aprovada por ${saleApprover}. Itens: ${itemsText}`
+          notes: `Doação para o jovem ${donationYouthName}${donationYouthBranch ? ` (${donationYouthBranch})` : ''} — aprovada por ${saleApprover}. Itens: ${itemsText}`
         }]);
         if (donError) throw donError;
       } else if (currentSaleType === 'fiado') {
@@ -374,7 +381,7 @@ const Lojinha: React.FC = () => {
           paid: false,
           user_id: profile?.id,
           user_name: profile?.display_name,
-          notes: `Fiado do chefe ${fiadoChefeName} — aprovado por ${saleApprover}. Itens: ${itemsText}`
+          notes: fiadoNotes ? fiadoNotes.trim() : null
         }]);
         if (fiadoError) throw fiadoError;
       }
@@ -736,6 +743,7 @@ const Lojinha: React.FC = () => {
     try {
       const { error } = await supabase.from('lojinha_donation_requests').insert([{
         youth_name: newDonationReq.youth_name.trim(),
+        youth_branch: newDonationReq.youth_branch || null,
         product_id: newDonationReq.product_id,
         item_name: prod ? `${prod.name}${prod.size ? ` (${prod.size})` : ''}` : null,
         quantity: Number(newDonationReq.quantity) || 1,
@@ -746,7 +754,7 @@ const Lojinha: React.FC = () => {
       }]);
       if (error) throw error;
       setIsDonationReqModalOpen(false);
-      setNewDonationReq({ youth_name: '', product_id: '', quantity: 1, notes: '' });
+      setNewDonationReq({ youth_name: '', youth_branch: '', product_id: '', quantity: 1, notes: '' });
       fetchData();
       alert('Pedido de doação criado! A equipe da lojinha verá a tarefa em Vendas → Fiados & Doações.');
     } catch (err: any) {
@@ -783,6 +791,7 @@ const Lojinha: React.FC = () => {
         total_amount: (prod.sale_price || prod.price || 0) * qty,
         items: [{ name: prod.name, size: prod.size || null, quantity: qty, price: prod.sale_price || prod.price || 0 }],
         youth_name: req.youth_name,
+        youth_branch: req.youth_branch || null,
         approver: req.requested_by,
         user_id: profile?.id,
         user_name: profile?.display_name,
@@ -1883,7 +1892,7 @@ const Lojinha: React.FC = () => {
                     return (
                       <tr key={product.id} className="hover:bg-gray-50 transition-colors">
                         <td className="px-6 py-4">
-                          <p className="font-medium text-gray-900">{product.name}</p>
+                          <p className="font-medium text-gray-900">{product.name}{product.size ? ` (${product.size})` : ''}</p>
                           <p className="text-xs text-gray-500">{product.barcode}</p>
                         </td>
                         <td className="px-6 py-4 font-medium text-gray-500">{product.stock}</td>
@@ -2324,6 +2333,17 @@ const Lojinha: React.FC = () => {
                           />
                         </div>
                         <div>
+                          <label className="text-[10px] font-black uppercase text-emerald-700 block mb-1">Ramo do Jovem</label>
+                          <select
+                            className="w-full px-3 py-2 bg-white border border-emerald-200 rounded-lg text-sm"
+                            value={donationYouthBranch}
+                            onChange={(e) => setDonationYouthBranch(e.target.value)}
+                          >
+                            <option value="">Selecione o ramo...</option>
+                            {RAMOS.map(r => <option key={r} value={r}>{r}</option>)}
+                          </select>
+                        </div>
+                        <div>
                           <label className="text-[10px] font-black uppercase text-emerald-700 block mb-1">Aprovado por</label>
                           <select
                             className="w-full px-3 py-2 bg-white border border-emerald-200 rounded-lg text-sm"
@@ -2372,6 +2392,16 @@ const Lojinha: React.FC = () => {
                             <option value="">Selecione o aprovador...</option>
                             {APPROVERS.map(a => <option key={a} value={a}>{a}</option>)}
                           </select>
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-black uppercase text-amber-700 block mb-1">Observações</label>
+                          <textarea
+                            rows={2}
+                            className="w-full px-3 py-2 bg-white border border-amber-200 rounded-lg text-sm"
+                            placeholder="Opcional (ex.: combinado, condições, etc.)"
+                            value={fiadoNotes}
+                            onChange={(e) => setFiadoNotes(e.target.value)}
+                          />
                         </div>
                       </div>
                     )}
@@ -2469,7 +2499,7 @@ const Lojinha: React.FC = () => {
                     {pendingDonationRequests.map((req) => (
                       <div key={req.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                         <div>
-                          <p className="text-sm font-bold text-gray-900">{req.quantity}x {req.item_name || 'Item'} → {req.youth_name}</p>
+                          <p className="text-sm font-bold text-gray-900">{req.quantity}x {req.item_name || 'Item'} → {req.youth_name}{req.youth_branch ? ` (${req.youth_branch})` : ''}</p>
                           <p className="text-[11px] text-gray-400">
                             Pedido por {req.requested_by || '-'}{req.created_at ? ` em ${format(new Date(req.created_at), 'dd/MM/yyyy')}` : ''}
                             {req.notes ? ` • ${req.notes}` : ''}
@@ -2546,6 +2576,7 @@ const Lojinha: React.FC = () => {
                             <td className="px-6 py-4">
                               <p className="text-sm font-bold text-gray-900">{sale.chefe_name || '-'}</p>
                               <p className="text-[11px] text-gray-400">Ref #{sale.reference || '-'}</p>
+                              {sale.notes && <p className="text-[11px] text-gray-500 mt-0.5 italic">Obs: {sale.notes}</p>}
                             </td>
                             <td className="px-6 py-4 text-xs text-gray-600">{sale.approver || '-'}</td>
                             <td className={cn("px-6 py-4 text-xs font-semibold", isOverdue ? "text-red-600" : "text-gray-600")}>
@@ -2638,6 +2669,7 @@ const Lojinha: React.FC = () => {
                       <tr>
                         <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Data</th>
                         <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Jovem</th>
+                        <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Ramo</th>
                         <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Aprovador</th>
                         <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Itens</th>
                         <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Valor de referência</th>
@@ -2650,6 +2682,7 @@ const Lojinha: React.FC = () => {
                             {sale.created_at ? format(new Date(sale.created_at), 'dd/MM/yyyy') : '-'}
                           </td>
                           <td className="px-6 py-4 text-sm font-bold text-gray-900">{sale.youth_name || '-'}</td>
+                          <td className="px-6 py-4 text-xs text-gray-600">{sale.youth_branch || '-'}</td>
                           <td className="px-6 py-4 text-xs text-gray-600">{sale.approver || '-'}</td>
                           <td className="px-6 py-4 text-xs text-gray-600">
                             {Array.isArray(sale.items)
@@ -2663,7 +2696,7 @@ const Lojinha: React.FC = () => {
                       ))}
                       {donationSales.length === 0 && (
                         <tr>
-                          <td colSpan={5} className="px-6 py-12 text-center text-gray-400">
+                          <td colSpan={6} className="px-6 py-12 text-center text-gray-400">
                             Nenhuma doação registrada.
                           </td>
                         </tr>
@@ -3773,6 +3806,14 @@ const Lojinha: React.FC = () => {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Nome do Jovem</label>
                 <input required type="text" className="w-full px-4 py-2 border border-gray-200 rounded-lg"
                   value={newDonationReq.youth_name} onChange={(e) => setNewDonationReq({ ...newDonationReq, youth_name: e.target.value })} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Ramo do Jovem</label>
+                <select className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                  value={newDonationReq.youth_branch} onChange={(e) => setNewDonationReq({ ...newDonationReq, youth_branch: e.target.value })}>
+                  <option value="">Selecione o ramo...</option>
+                  {RAMOS.map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Item a doar</label>
