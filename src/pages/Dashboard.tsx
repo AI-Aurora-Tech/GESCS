@@ -172,13 +172,15 @@ const Dashboard: React.FC = () => {
       try {
         const { data: lojinhaData, error: lojinhaError } = await supabase
           .from('stock_transactions')
-          .select('quantity, sale_type, products(price, sale_price)')
+          .select('quantity, sale_type, notes, products(price, sale_price)')
           .in('type', ['out', 'exit']);
 
         if (!lojinhaError && lojinhaData) {
           lojinhaTotal = lojinhaData.reduce((acc, curr: any) => {
-            // Doação não é venda -> não entra no faturamento
-            if (curr.sale_type === 'donation') return acc;
+            // Conta APENAS vendas reais. Exclui doação e ajustes (manual/conferência).
+            const notes = (curr.notes || '').toLowerCase();
+            const isNaoVenda = curr.sale_type === 'donation' || curr.sale_type === 'adjustment' || notes.includes('ajuste');
+            if (isNaoVenda) return acc;
             const pr = Number(curr.products?.sale_price) || Number(curr.products?.price) || 0;
             return acc + ((Number(curr.quantity) || 0) * pr);
           }, 0);

@@ -2,8 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   Plus, 
   Search, 
-  ArrowUpRight, 
-  ArrowDownLeft, 
+  ArrowUpRight,
+  ArrowDownLeft,
+  ArrowUp,
+  ArrowDown,
   Barcode as BarcodeIcon,
   Download,
   FileText,
@@ -60,6 +62,21 @@ interface Product {
   available_for_sale?: boolean;
 }
 
+// Classifica uma movimentação de estoque em 'venda' | 'saida' | 'entrada'.
+// - Entrada: entradas de estoque (entry/in)
+// - Venda: saída que é uma venda real (PDV normal ou fiado)
+// - Saída: saída que NÃO é venda (doação, ajuste manual, ajuste de conferência)
+const classifyMov = (t: any): 'venda' | 'saida' | 'entrada' => {
+  const isEntry = t?.type === 'entry' || t?.type === 'in';
+  if (isEntry) return 'entrada';
+  const st = t?.sale_type;
+  const notes = (t?.notes || '').toLowerCase();
+  const isAdjustment = st === 'adjustment' || notes.includes('ajuste'); // cobre dados antigos
+  const isDonation = st === 'donation';
+  if (isAdjustment || isDonation) return 'saida';
+  return 'venda'; // normal, fiado ou legado sem marcação
+};
+
 const Lojinha: React.FC = () => {
   const { profile, user, loading: authLoading } = useAuth();
   const [activeTab, setActiveTab] = useState<'estoque' | 'cadastros' | 'movimentacao' | 'pagvendas' | 'relatorios' | 'demandas' | 'configuracoes' | 'conferencia'>('estoque');
@@ -85,6 +102,7 @@ const Lojinha: React.FC = () => {
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [printQuantities, setPrintQuantities] = useState<Record<string, number>>({});
   const [reportPeriod, setReportPeriod] = useState<'all' | 'today' | 'week' | 'month'>('month');
+  const [movFilter, setMovFilter] = useState<'all' | 'venda' | 'saida' | 'entrada'>('all');
   const [printMode, setPrintMode] = useState<'labels' | 'report'>('labels');
 
   // New Product Form
@@ -581,6 +599,7 @@ const Lojinha: React.FC = () => {
           type: diff > 0 ? 'entry' : 'exit',
           quantity: Math.abs(diff),
           user_id: profile?.id,
+          sale_type: 'adjustment',
           notes: `Ajuste por conferência de estoque (sistema: ${currentStock} → físico: ${physical})`
         }]);
         if (txErr) throw txErr;
@@ -1239,6 +1258,7 @@ const Lojinha: React.FC = () => {
           type: stockAction,
           quantity: qty,
           user_id: profile?.id,
+          sale_type: 'adjustment',
           notes: `Ajuste manual de estoque (${stockAction === 'entry' ? 'entrada' : 'saída'})`
         }]);
       if (transError) throw transError;
@@ -1405,7 +1425,7 @@ const Lojinha: React.FC = () => {
           return true; // all
         });
 
-        const lastTrans = filteredTrans.filter(t => t.type === 'exit' && t.sale_type !== 'donation');
+        const lastTrans = filteredTrans.filter(t => classifyMov(t) === 'venda');
         const totalRevenue = lastTrans.reduce((acc, t) => {
           const price = Number(t.products?.sale_price) || Number(t.products?.price) || 0;
           return acc + (Number(t.quantity) * price);
@@ -1755,27 +1775,27 @@ const Lojinha: React.FC = () => {
                         >
                           <Trash2 size={18} />
                         </button>
-                        <button 
+                        <button
                           onClick={() => {
                             setSelectedProduct(product);
                             setStockAction('entry');
                             setIsStockModalOpen(true);
                           }}
                           className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"
-                          title="Entrada"
+                          title="Incluir estoque (Entrada)"
                         >
-                          <ArrowDownLeft size={18} />
+                          <ArrowUp size={18} />
                         </button>
-                        <button 
+                        <button
                           onClick={() => {
                             setSelectedProduct(product);
                             setStockAction('exit');
                             setIsStockModalOpen(true);
                           }}
                           className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
-                          title="Saída"
+                          title="Saída de estoque"
                         >
-                          <ArrowUpRight size={18} />
+                          <ArrowDown size={18} />
                         </button>
                         <button
                           onClick={() => {
@@ -2862,9 +2882,30 @@ const Lojinha: React.FC = () => {
       {activeTab === 'pagvendas' && activePdvTab === 'movimentacao' && (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-            <div className="p-6 border-b border-gray-100">
-              <h3 className="text-lg font-bold">Movimentações — Entradas, Saídas e Vendas</h3>
-              <p className="text-xs text-gray-500">Todas as vendas, entradas e saídas de estoque da lojinha.</p>
+            <div className="p-6 border-b border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-bold">Movimentações — Entradas, Saídas e Vendas</h3>
+                <p className="text-xs text-gray-500">Todas as vendas, entradas e saídas de estoque da lojinha.</p>
+              </div>
+              <div className="flex bg-gray-100 p-1 rounded-lg self-start">
+                {[
+                  { id: 'all', label: 'Todos' },
+                  { id: 'venda', label: 'Venda' },
+                  { id: 'saida', label: 'Saída' },
+                  { id: 'entrada', label: 'Entrada' }
+                ].map(f => (
+                  <button
+                    key={f.id}
+                    onClick={() => setMovFilter(f.id as any)}
+                    className={cn(
+                      "px-3 py-1.5 text-xs font-bold rounded-md transition-all",
+                      movFilter === f.id ? "bg-white text-blue-600 shadow-sm" : "text-gray-500 hover:text-gray-900"
+                    )}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
             </div>
             <table className="w-full text-left">
               <thead className="bg-gray-50">
@@ -2878,8 +2919,8 @@ const Lojinha: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {transactions.map((t) => {
-                  const isEntry = t.type === 'entry' || t.type === 'in';
+                {transactions.filter(t => movFilter === 'all' || classifyMov(t) === movFilter).map((t) => {
+                  const mov = classifyMov(t);
                   return (
                     <tr key={t.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 text-sm text-gray-500">
@@ -2891,9 +2932,10 @@ const Lojinha: React.FC = () => {
                       <td className="px-6 py-4">
                         <span className={cn(
                           "px-2 py-1 rounded-full text-[10px] font-bold uppercase",
-                          isEntry ? "bg-green-100 text-green-600" : "bg-red-100 text-red-600"
+                          mov === 'entrada' ? "bg-green-100 text-green-600" :
+                          mov === 'venda' ? "bg-blue-100 text-blue-600" : "bg-red-100 text-red-600"
                         )}>
-                          {isEntry ? 'Entrada' : 'Saída'}
+                          {mov === 'entrada' ? 'Entrada' : mov === 'venda' ? 'Venda' : 'Saída'}
                         </span>
                         {t.sale_type === 'donation' && (
                           <span className="ml-1 px-2 py-1 rounded-full text-[10px] font-bold uppercase bg-emerald-100 text-emerald-600">Doação</span>
@@ -2939,7 +2981,7 @@ const Lojinha: React.FC = () => {
           return true; // all
         });
 
-        const lastTrans = filteredTrans.filter(t => t.type === 'exit' && t.sale_type !== 'donation');
+        const lastTrans = filteredTrans.filter(t => classifyMov(t) === 'venda');
         const totalRevenue = lastTrans.reduce((acc, t) => {
           const price = Number(t.products?.sale_price) || Number(t.products?.price) || 0;
           return acc + (Number(t.quantity) * price);
