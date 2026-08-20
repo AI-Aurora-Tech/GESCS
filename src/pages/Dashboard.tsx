@@ -34,6 +34,68 @@ const Dashboard: React.FC = () => {
   type AlertItem = { title: string; type: 'warning' | 'error' | 'info'; subtitle: string; module: string };
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
 
+  // Demandas consolidadas (Admin Geral): lojinha + cantina + ativos
+  type UnifiedDemand = { id: string; source: 'lojinha' | 'ativos' | 'purchase'; area: 'lojinha' | 'cantina' | 'ativos'; item: string; quantity: number };
+  const [showDemands, setShowDemands] = useState(false);
+  const [unifiedDemands, setUnifiedDemands] = useState<UnifiedDemand[]>([]);
+  const [newPd, setNewPd] = useState<{ area: 'lojinha' | 'cantina' | 'ativos'; item: string; quantity: number }>({ area: 'cantina', item: '', quantity: 1 });
+
+  const fetchUnifiedDemands = async () => {
+    const list: UnifiedDemand[] = [];
+    // Lojinha (demandas pendentes, não congeladas)
+    try {
+      const { data } = await supabase.from('lojinha_demands').select('*').eq('status', 'pending');
+      (data || []).filter((d: any) => !d.frozen).forEach((d: any) => list.push({ id: 'lj-' + d.id, source: 'lojinha', area: 'lojinha', item: d.title, quantity: 1 }));
+    } catch (e) {}
+    // Ativos (patrimônio pendente de aprovação)
+    try {
+      const { data } = await supabase.from('assets').select('id, name, status').eq('status', 'pending_approval');
+      (data || []).forEach((a: any) => list.push({ id: 'at-' + a.id, source: 'ativos', area: 'ativos', item: a.name, quantity: 1 }));
+    } catch (e) {}
+    // Demandas de compra (cantina/lojinha/ativos) — tabela purchase_demands
+    try {
+      const { data } = await supabase.from('purchase_demands').select('*').eq('status', 'pending');
+      (data || []).forEach((p: any) => list.push({ id: 'pd-' + p.id, source: 'purchase', area: p.area, item: p.item, quantity: p.quantity || 1 }));
+    } catch (e) {}
+    setUnifiedDemands(list);
+  };
+
+  const openDemands = () => { fetchUnifiedDemands(); setShowDemands(true); };
+
+  const handleMarkBought = async (d: UnifiedDemand) => {
+    const realId = d.id.substring(3);
+    try {
+      if (d.source === 'lojinha') {
+        await supabase.from('lojinha_demands').update({ status: 'completed', purchased_by: profile?.display_name, purchased_at: new Date().toISOString() }).eq('id', realId);
+      } else if (d.source === 'ativos') {
+        await supabase.from('assets').update({ status: 'active' }).eq('id', realId);
+      } else {
+        await supabase.from('purchase_demands').update({ status: 'bought', bought_by: profile?.display_name, bought_at: new Date().toISOString() }).eq('id', realId);
+      }
+      fetchUnifiedDemands();
+    } catch (err: any) {
+      alert('Erro ao marcar como comprado: ' + (err?.message || 'Erro inesperado'));
+    }
+  };
+
+  const handleAddPurchaseDemand = async () => {
+    if (!newPd.item.trim()) { alert('Informe o nome do item.'); return; }
+    try {
+      const { error } = await supabase.from('purchase_demands').insert([{
+        area: newPd.area, item: newPd.item.trim(), quantity: Number(newPd.quantity) || 1,
+        created_by: profile?.display_name, user_id: profile?.id
+      }]);
+      if (error) throw error;
+      setNewPd({ area: 'cantina', item: '', quantity: 1 });
+      fetchUnifiedDemands();
+    } catch (err: any) {
+      alert('Erro ao adicionar demanda: ' + (err?.message || 'Erro inesperado') + '\n\nSe falar em tabela inexistente, rode o SQL (PARTE 8).');
+    }
+  };
+
+  const areaLabel: Record<string, string> = { lojinha: 'Lojinha', cantina: 'Cantina', ativos: 'Ativos' };
+  const areaBadge: Record<string, string> = { lojinha: 'bg-blue-100 text-blue-700', cantina: 'bg-amber-100 text-amber-700', ativos: 'bg-orange-100 text-orange-700' };
+
   const canSeeModule = (m: string) => isGeral || role.includes(m);
 
   const fetchAlerts = async () => {
@@ -240,10 +302,48 @@ const Dashboard: React.FC = () => {
   ].filter(Boolean) as { name: string; value: number }[];
 
   return (
-    <div className="space-y-8">
-      <header>
-        <h1 className="text-2xl font-bold text-gray-900">Dashboard Geral</h1>
-        <p className="text-gray-500">Visão geral de todos os sistemas integrados.</p>
+    <>
+    {/* Seção só de impressão: relatório de demandas */}
+    <div className="hidden print:block p-8 text-black">
+      <h1 className="text-2xl font-black mb-1">Demandas Pendentes — Compras</h1>
+      <p className="text-sm mb-6">Relatório consolidado (Lojinha, Cantina e Ativos)</p>
+      <table className="w-full text-left border border-black text-sm">
+        <thead>
+          <tr>
+            <th className="border border-black p-2">Área</th>
+            <th className="border border-black p-2">Item</th>
+            <th className="border border-black p-2 text-center">Qtd</th>
+          </tr>
+        </thead>
+        <tbody>
+          {unifiedDemands.map(d => (
+            <tr key={d.id}>
+              <td className="border border-black p-2">{areaLabel[d.area]}</td>
+              <td className="border border-black p-2">{d.item}</td>
+              <td className="border border-black p-2 text-center">{d.quantity}</td>
+            </tr>
+          ))}
+          {unifiedDemands.length === 0 && (
+            <tr><td colSpan={3} className="border border-black p-3 text-center">Nenhuma demanda pendente.</td></tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+
+    <div className="space-y-8 print:hidden">
+      <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Dashboard Geral</h1>
+          <p className="text-gray-500">Visão geral de todos os sistemas integrados.</p>
+        </div>
+        {isGeral && (
+          <button
+            onClick={openDemands}
+            className="flex items-center gap-2 px-5 py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800 shadow-sm self-start"
+          >
+            <Package size={18} /> DEMANDAS
+          </button>
+        )}
       </header>
 
       {/* Stats Grid */}
@@ -312,7 +412,73 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Modal: Demandas consolidadas (Admin Geral) */}
+      {showDemands && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 print:hidden">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+            <div className="p-6 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-bold">Demandas Pendentes — Compras</h2>
+                <p className="text-xs text-gray-500">Consolidado de Lojinha, Cantina e Ativos.</p>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => window.print()} className="px-3 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700">Imprimir</button>
+                <button onClick={() => setShowDemands(false)} className="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg text-xs font-bold hover:bg-gray-200">Fechar</button>
+              </div>
+            </div>
+
+            {/* Adicionar demanda (útil p/ Cantina) */}
+            <div className="p-4 bg-gray-50 border-b border-gray-100 flex flex-col sm:flex-row gap-2">
+              <select value={newPd.area} onChange={(e) => setNewPd({ ...newPd, area: e.target.value as any })}
+                className="px-3 py-2 border border-gray-200 rounded-lg text-sm">
+                <option value="cantina">Cantina</option>
+                <option value="lojinha">Lojinha</option>
+                <option value="ativos">Ativos</option>
+              </select>
+              <input type="text" placeholder="Item a comprar..." value={newPd.item}
+                onChange={(e) => setNewPd({ ...newPd, item: e.target.value })}
+                className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm" />
+              <input type="number" min="1" value={newPd.quantity}
+                onChange={(e) => setNewPd({ ...newPd, quantity: parseInt(e.target.value) || 1 })}
+                className="w-20 px-3 py-2 border border-gray-200 rounded-lg text-sm" />
+              <button onClick={handleAddPurchaseDemand} className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-bold hover:bg-emerald-700">Adicionar</button>
+            </div>
+
+            <div className="overflow-y-auto flex-1">
+              <table className="w-full text-left">
+                <thead className="bg-gray-50 sticky top-0">
+                  <tr>
+                    <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Área</th>
+                    <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Item</th>
+                    <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider text-center">Qtd</th>
+                    <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Ação</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {unifiedDemands.map(d => (
+                    <tr key={d.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-3">
+                        <span className={cn("px-2 py-1 rounded-full text-[10px] font-black uppercase", areaBadge[d.area])}>{areaLabel[d.area]}</span>
+                      </td>
+                      <td className="px-6 py-3 text-sm font-medium text-gray-900">{d.item}</td>
+                      <td className="px-6 py-3 text-center text-sm">{d.quantity}</td>
+                      <td className="px-6 py-3 text-right">
+                        <button onClick={() => handleMarkBought(d)} className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-[11px] font-bold hover:bg-green-700">Comprado</button>
+                      </td>
+                    </tr>
+                  ))}
+                  {unifiedDemands.length === 0 && (
+                    <tr><td colSpan={4} className="px-6 py-12 text-center text-gray-400">Nenhuma demanda pendente. 🎉</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
+    </>
   );
 };
 
