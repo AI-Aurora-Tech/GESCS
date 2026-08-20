@@ -314,3 +314,60 @@ ALTER TABLE public.lojinha_special_sales
   ADD COLUMN IF NOT EXISTS youth_branch text;
 ALTER TABLE public.lojinha_donation_requests
   ADD COLUMN IF NOT EXISTS youth_branch text;
+
+
+-- ============================================================================
+-- PARTE 8 — Agenda (data de término), Presença (escoteiros) e Demandas de compra
+-- ============================================================================
+
+-- 8.1) Agenda: data de término (eventos de mais de 1 dia)
+ALTER TABLE public.scout_events
+  ADD COLUMN IF NOT EXISTS end_date date;
+
+-- 8.2) Controle de presença dos escoteiros
+CREATE TABLE IF NOT EXISTS public.scout_attendance (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  member_id   uuid,
+  member_name text,
+  date        date NOT NULL,
+  present     boolean NOT NULL DEFAULT true,
+  notes       text,
+  user_id     uuid,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_scout_attendance_date ON public.scout_attendance (date);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_scout_attendance_member_date
+  ON public.scout_attendance (member_id, date);
+
+ALTER TABLE public.scout_attendance ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "scout_attendance_all" ON public.scout_attendance;
+CREATE POLICY "scout_attendance_all" ON public.scout_attendance FOR ALL
+  USING (auth.role() = 'authenticated') WITH CHECK (auth.role() = 'authenticated');
+
+-- 8.3) Demandas de compra (fonte extra p/ o consolidado do Admin Geral,
+--      principalmente para a Cantina, que não tinha demanda estruturada)
+CREATE TABLE IF NOT EXISTS public.purchase_demands (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  area        text NOT NULL CHECK (area IN ('lojinha','cantina','ativos')),
+  item        text NOT NULL,
+  quantity    int NOT NULL DEFAULT 1,
+  notes       text,
+  status      text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','bought','cancelled')),
+  created_by  text,
+  user_id     uuid,
+  bought_by   text,
+  bought_at   timestamptz,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_purchase_demands_status ON public.purchase_demands (status);
+
+ALTER TABLE public.purchase_demands ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "purchase_demands_all" ON public.purchase_demands;
+CREATE POLICY "purchase_demands_all" ON public.purchase_demands FOR ALL
+  USING (auth.role() = 'authenticated') WITH CHECK (auth.role() = 'authenticated');
+
+DO $$
+BEGIN
+  BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.scout_attendance; EXCEPTION WHEN duplicate_object THEN NULL; END;
+  BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.purchase_demands; EXCEPTION WHEN duplicate_object THEN NULL; END;
+END $$;

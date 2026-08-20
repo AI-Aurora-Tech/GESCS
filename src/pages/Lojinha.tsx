@@ -404,14 +404,6 @@ const Lojinha: React.FC = () => {
         if (fiadoError) throw fiadoError;
       }
 
-      // Captura os dados do fiado ANTES de limpar os campos (para o alerta de aprovação)
-      const fiadoInfo = currentSaleType === 'fiado' ? {
-        chefe_name: fiadoChefeName,
-        total_amount: totalAmount,
-        due_date: fiadoDueDate,
-        items: cartSnapshot
-      } : null;
-
       setPaymentStatus('approved');
       setCart([]);
       resetSpecialSaleFields();
@@ -421,8 +413,7 @@ const Lojinha: React.FC = () => {
       if (currentSaleType === 'donation') {
         alert('Doação registrada com sucesso! Os itens foram baixados do estoque, sem movimentação financeira.');
       } else if (currentSaleType === 'fiado') {
-        // Abre o alerta de aprovação por WhatsApp (Édson / Juliana)
-        setPendingFiadoApproval(fiadoInfo);
+        alert('Venda fiada registrada! Ficará como "a receber" até ser marcada como paga na aba Vendas → Fiados & Doações.');
       }
     } catch (err: any) {
       console.error("Erro ao registrar a conclusão da venda:", err);
@@ -447,11 +438,10 @@ const Lojinha: React.FC = () => {
       return;
     }
 
-    // Fiado: registra "a receber", sem financeiro agora, SEM maquininha
+    // Fiado: registra "a receber", sem financeiro agora, SEM maquininha nem aprovação
     if (saleType === 'fiado') {
       if (!fiadoChefeName.trim()) { alert('Informe o nome do Chefe que pegou o item.'); return; }
       if (!fiadoDueDate) { alert('Informe a data de pagamento do fiado.'); return; }
-      if (!saleApprover) { alert('Selecione o aprovador (Édson ou Sandra).'); return; }
       await completePdvSale(reference, 'none');
       return;
     }
@@ -2403,17 +2393,6 @@ const Lojinha: React.FC = () => {
                           />
                         </div>
                         <div>
-                          <label className="text-[10px] font-black uppercase text-amber-700 block mb-1">Aprovado por</label>
-                          <select
-                            className="w-full px-3 py-2 bg-white border border-amber-200 rounded-lg text-sm"
-                            value={saleApprover}
-                            onChange={(e) => setSaleApprover(e.target.value)}
-                          >
-                            <option value="">Selecione o aprovador...</option>
-                            {APPROVERS.map(a => <option key={a} value={a}>{a}</option>)}
-                          </select>
-                        </div>
-                        <div>
                           <label className="text-[10px] font-black uppercase text-amber-700 block mb-1">Observações</label>
                           <textarea
                             rows={2}
@@ -2578,7 +2557,6 @@ const Lojinha: React.FC = () => {
                       <tr>
                         <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Data</th>
                         <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Chefe</th>
-                        <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Aprovador</th>
                         <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Vencimento</th>
                         <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Valor</th>
                         <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider text-center">Status</th>
@@ -2598,7 +2576,6 @@ const Lojinha: React.FC = () => {
                               <p className="text-[11px] text-gray-400">Ref #{sale.reference || '-'}</p>
                               {sale.notes && <p className="text-[11px] text-gray-500 mt-0.5 italic">Obs: {sale.notes}</p>}
                             </td>
-                            <td className="px-6 py-4 text-xs text-gray-600">{sale.approver || '-'}</td>
                             <td className={cn("px-6 py-4 text-xs font-semibold", isOverdue ? "text-red-600" : "text-gray-600")}>
                               {sale.due_date ? format(new Date(sale.due_date + 'T00:00:00'), 'dd/MM/yyyy') : '-'}
                             </td>
@@ -2606,47 +2583,15 @@ const Lojinha: React.FC = () => {
                               R$ {Number(sale.total_amount || 0).toFixed(2)}
                             </td>
                             <td className="px-6 py-4 text-center">
-                              <div className="flex flex-col items-center gap-1">
-                                {/* Status de pagamento */}
-                                {sale.paid ? (
-                                  <span className="px-2.5 py-1 bg-green-100 text-green-700 rounded-full text-[10px] font-black uppercase">Pago</span>
-                                ) : isOverdue ? (
-                                  <span className="px-2.5 py-1 bg-red-100 text-red-700 rounded-full text-[10px] font-black uppercase">Vencido</span>
-                                ) : (
-                                  <span className="px-2.5 py-1 bg-amber-100 text-amber-700 rounded-full text-[10px] font-black uppercase">Em aberto</span>
-                                )}
-                                {/* Status de aprovação */}
-                                {(sale.approval_status || 'pending') === 'approved' ? (
-                                  <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-[9px] font-black uppercase">
-                                    Aprovado{sale.approved_by ? `: ${sale.approved_by}` : ''}
-                                  </span>
-                                ) : (sale.approval_status === 'denied') ? (
-                                  <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-[9px] font-black uppercase">
-                                    Negado{sale.approved_by ? `: ${sale.approved_by}` : ''}
-                                  </span>
-                                ) : (
-                                  <span className="px-2 py-0.5 bg-gray-100 text-gray-500 rounded-full text-[9px] font-black uppercase">Aprovação pendente</span>
-                                )}
-                              </div>
+                              {sale.paid ? (
+                                <span className="px-2.5 py-1 bg-green-100 text-green-700 rounded-full text-[10px] font-black uppercase">Pago</span>
+                              ) : isOverdue ? (
+                                <span className="px-2.5 py-1 bg-red-100 text-red-700 rounded-full text-[10px] font-black uppercase">Vencido</span>
+                              ) : (
+                                <span className="px-2.5 py-1 bg-amber-100 text-amber-700 rounded-full text-[10px] font-black uppercase">Em aberto</span>
+                              )}
                             </td>
                             <td className="px-6 py-4 text-right">
-                              <div className="flex flex-col items-end gap-1.5">
-                                {(sale.approval_status || 'pending') === 'pending' && (
-                                  <div className="flex gap-1.5">
-                                    <button
-                                      onClick={() => handleFiadoApproval(sale, 'approved')}
-                                      className="px-2.5 py-1.5 bg-blue-600 text-white hover:bg-blue-700 rounded-lg text-[11px] font-bold inline-flex items-center gap-1"
-                                    >
-                                      <Check size={12} /> Aprovar
-                                    </button>
-                                    <button
-                                      onClick={() => handleFiadoApproval(sale, 'denied')}
-                                      className="px-2.5 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg text-[11px] font-bold inline-flex items-center gap-1"
-                                    >
-                                      <X size={12} /> Negar
-                                    </button>
-                                  </div>
-                                )}
                               {!sale.paid && (
                                 <button
                                   onClick={() => handleMarkFiadoPaid(sale)}
@@ -2660,14 +2605,13 @@ const Lojinha: React.FC = () => {
                                   em {format(new Date(sale.paid_at), 'dd/MM/yyyy')}
                                 </span>
                               )}
-                              </div>
                             </td>
                           </tr>
                         );
                       })}
                       {fiadoSales.length === 0 && (
                         <tr>
-                          <td colSpan={7} className="px-6 py-12 text-center text-gray-400">
+                          <td colSpan={6} className="px-6 py-12 text-center text-gray-400">
                             Nenhum fiado registrado.
                           </td>
                         </tr>
@@ -3882,48 +3826,6 @@ const Lojinha: React.FC = () => {
                 <button type="submit" className="flex-1 py-2 bg-emerald-600 text-white rounded-lg text-sm font-bold hover:bg-emerald-700">Criar pedido</button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-
-      {/* Modal: Aprovação de fiado via WhatsApp */}
-      {pendingFiadoApproval && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="p-2 bg-amber-100 text-amber-600 rounded-lg"><Clock size={22} /></div>
-              <h2 className="text-xl font-bold">Fiado registrado — enviar p/ aprovação</h2>
-            </div>
-            <p className="text-sm text-gray-500 mb-4">
-              Envie a solicitação de aprovação para o Édson e a Juliana pelo WhatsApp.
-            </p>
-            <div className="p-3 bg-amber-50/50 border border-amber-100 rounded-xl text-sm mb-4">
-              <p><strong>Chefe:</strong> {pendingFiadoApproval.chefe_name}</p>
-              <p><strong>Valor:</strong> R$ {Number(pendingFiadoApproval.total_amount || 0).toFixed(2)}</p>
-              <p><strong>Vencimento:</strong> {pendingFiadoApproval.due_date ? format(new Date(pendingFiadoApproval.due_date + 'T00:00:00'), 'dd/MM/yyyy') : '-'}</p>
-            </div>
-
-            <p className="text-[11px] text-gray-400 mb-4">Os números do Édson e da Juliana já estão configurados. É só clicar para enviar.</p>
-
-            <div className="flex flex-col gap-2">
-              <a
-                href={buildWaLink(WA_EDSON, fiadoApprovalMessage(pendingFiadoApproval))}
-                target="_blank" rel="noreferrer"
-                className="w-full py-2.5 bg-green-600 text-white rounded-xl font-bold hover:bg-green-700 flex items-center justify-center gap-2"
-              >
-                <MessageCircle size={18} /> Enviar p/ Chefe Édson (WhatsApp)
-              </a>
-              <a
-                href={buildWaLink(WA_JULIANA, fiadoApprovalMessage(pendingFiadoApproval))}
-                target="_blank" rel="noreferrer"
-                className="w-full py-2.5 bg-green-600 text-white rounded-xl font-bold hover:bg-green-700 flex items-center justify-center gap-2"
-              >
-                <MessageCircle size={18} /> Enviar p/ Juliana (WhatsApp)
-              </a>
-              <button onClick={() => setPendingFiadoApproval(null)} className="w-full py-2 text-gray-500 hover:bg-gray-50 rounded-xl text-sm font-medium mt-1">
-                Fechar
-              </button>
-            </div>
           </div>
         </div>
       )}
