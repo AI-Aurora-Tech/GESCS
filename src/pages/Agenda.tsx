@@ -12,7 +12,8 @@ import {
   Clock, 
   Trash2,
   List,
-  Grid
+  Grid,
+  Pencil
 } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, isSameDay, parseISO, addMonths, subMonths } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -23,19 +24,21 @@ interface ScoutEvent {
   id: string;
   title: string;
   description?: string;
-  date: string; // YYYY-MM-DD
-  branch: 'Filhote' | 'Lobinho' | 'Escoteiro' | 'Senior' | 'Pioneiro' | 'Grupo Geral' | 'Chefia';
+  date: string; // YYYY-MM-DD (início)
+  end_date?: string; // YYYY-MM-DD (término; igual ao início se for de 1 dia)
+  branch: string; // ramo/etiqueta (pode ser personalizada por admin geral)
   created_at?: string;
 }
 
-const BRANCH_CONFIG = {
+const BRANCH_CONFIG: Record<string, { label: string; color: string; border: string; hex: string }> = {
   'Filhote': { label: 'Filhote', color: 'bg-orange-500 text-white', border: 'border-orange-500', hex: '#F97316' },
   'Lobinho': { label: 'Lobinho', color: 'bg-yellow-400 text-gray-900', border: 'border-yellow-400', hex: '#FACC15' },
   'Escoteiro': { label: 'Escoteiro', color: 'bg-emerald-600 text-white', border: 'border-emerald-600', hex: '#059669' },
   'Senior': { label: 'Senior', color: 'bg-rose-900 text-white', border: 'border-rose-900', hex: '#4C0519' },
   'Pioneiro': { label: 'Pioneiro', color: 'bg-red-600 text-white', border: 'border-red-600', hex: '#DC2626' },
   'Grupo Geral': { label: 'Grupo Geral', color: 'bg-orange-400 text-white', border: 'border-orange-400', hex: '#FB923C' },
-  'Chefia': { label: 'Chefia', color: 'bg-blue-600 text-white', border: 'border-blue-600', hex: '#2563EB' }
+  'Chefia': { label: 'Chefia', color: 'bg-blue-600 text-white', border: 'border-blue-600', hex: '#2563EB' },
+  'UEB': { label: 'UEB / Comemorativa', color: 'bg-purple-600 text-white', border: 'border-purple-600', hex: '#7C3AED' }
 };
 
 // Fixed Brazilian National Holidays for current/any year
@@ -76,14 +79,49 @@ const Agenda: React.FC = () => {
   const [showHolidays, setShowHolidays] = useState<boolean>(true);
   const [viewMode, setViewMode] = useState<'calendar' | 'list'>('calendar');
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
-  
+  const [editingEventId, setEditingEventId] = useState<string | null>(null);
+  const [useCustomBranch, setUseCustomBranch] = useState<boolean>(false);
+  const [customBranch, setCustomBranch] = useState<string>('');
+
+  const isAdminGeral = profile?.role === 'admin_geral';
+
   // New Event Form State
   const [newEvent, setNewEvent] = useState({
     title: '',
     description: '',
     date: format(new Date(), 'yyyy-MM-dd'),
-    branch: 'Grupo Geral' as ScoutEvent['branch']
+    end_date: format(new Date(), 'yyyy-MM-dd'),
+    branch: 'Grupo Geral'
   });
+
+  const openNewEventModal = () => {
+    setEditingEventId(null);
+    setUseCustomBranch(false);
+    setCustomBranch('');
+    setNewEvent({
+      title: '',
+      description: '',
+      date: format(currentDate, 'yyyy-MM-dd'),
+      end_date: format(currentDate, 'yyyy-MM-dd'),
+      branch: 'Grupo Geral'
+    });
+    setIsModalOpen(true);
+  };
+
+  const openEditEventModal = (ev: ScoutEvent) => {
+    setEditingEventId(ev.id);
+    const known = !!BRANCH_CONFIG[ev.branch];
+    setUseCustomBranch(!known);
+    setCustomBranch(known ? '' : ev.branch);
+    setNewEvent({
+      title: ev.title,
+      description: ev.description || '',
+      date: ev.date,
+      end_date: ev.end_date || ev.date,
+      branch: ev.branch
+    });
+    setIsModalOpen(true);
+  };
 
   const year = currentDate.getFullYear();
   const holidays = getHolidays(year);
@@ -125,31 +163,58 @@ const Agenda: React.FC = () => {
     fetchEvents();
   }, []);
 
-  const handleAddEvent = async (e: React.FormEvent) => {
+  const handleSaveEvent = async (e: React.FormEvent) => {
     e.preventDefault();
-    const eventItem: ScoutEvent = {
-      id: Math.random().toString(36).substring(2, 9),
-      ...newEvent,
-      created_at: new Date().toISOString()
+
+    // Etiqueta: fixa ou personalizada (admin geral)
+    const branch = (useCustomBranch ? customBranch.trim() : newEvent.branch) || 'Grupo Geral';
+    // Garante término >= início
+    const end_date = (!newEvent.end_date || newEvent.end_date < newEvent.date) ? newEvent.date : newEvent.end_date;
+    const payload = {
+      title: newEvent.title,
+      description: newEvent.description,
+      date: newEvent.date,
+      end_date,
+      branch
     };
 
-    try {
-      // Attempt Supabase insert
-      const { error } = await supabase.from('scout_events').insert([newEvent]);
-      if (error) throw error;
-      fetchEvents();
-    } catch (err) {
-      console.warn("Could not insert in Supabase, saving locally", err);
-      const updated = [...events, eventItem].sort((a, b) => a.date.localeCompare(b.date));
-      setEvents(updated);
-      localStorage.setItem('scout_events', JSON.stringify(updated));
+    if (editingEventId) {
+      // EDITAR
+      try {
+        const { error } = await supabase.from('scout_events').update(payload).eq('id', editingEventId);
+        if (error) throw error;
+        fetchEvents();
+      } catch (err) {
+        console.warn("Supabase update falhou, editando localmente", err);
+        const updated = events.map(ev => ev.id === editingEventId ? { ...ev, ...payload } : ev)
+          .sort((a, b) => a.date.localeCompare(b.date));
+        setEvents(updated);
+        localStorage.setItem('scout_events', JSON.stringify(updated));
+      }
+    } else {
+      // CRIAR
+      const eventItem: ScoutEvent = { id: Math.random().toString(36).substring(2, 9), ...payload, created_at: new Date().toISOString() };
+      try {
+        const { error } = await supabase.from('scout_events').insert([payload]);
+        if (error) throw error;
+        fetchEvents();
+      } catch (err) {
+        console.warn("Could not insert in Supabase, saving locally", err);
+        const updated = [...events, eventItem].sort((a, b) => a.date.localeCompare(b.date));
+        setEvents(updated);
+        localStorage.setItem('scout_events', JSON.stringify(updated));
+      }
     }
 
     setIsModalOpen(false);
+    setEditingEventId(null);
+    setUseCustomBranch(false);
+    setCustomBranch('');
     setNewEvent({
       title: '',
       description: '',
       date: format(currentDate, 'yyyy-MM-dd'),
+      end_date: format(currentDate, 'yyyy-MM-dd'),
       branch: 'Grupo Geral'
     });
   };
@@ -207,7 +272,7 @@ const Agenda: React.FC = () => {
             )}
           </button>
           <button
-            onClick={() => setIsModalOpen(true)}
+            onClick={openNewEventModal}
             className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors shadow-sm"
           >
             <Plus size={16} className="mr-2" /> Novo Evento
@@ -307,8 +372,8 @@ const Agenda: React.FC = () => {
               const dateStr = format(day, 'yyyy-MM-dd');
               const isToday = isSameDay(day, new Date()); // Dia de hoje real
               
-              // Filter events for this day
-              const dayEvents = filteredEvents.filter(ev => ev.date === dateStr);
+              // Filter events for this day (considera intervalo início→término)
+              const dayEvents = filteredEvents.filter(ev => dateStr >= ev.date && dateStr <= (ev.end_date || ev.date));
               
               // Filter holidays for this day
               const dayHoliday = showHolidays ? holidays.find(h => h.date === dateStr) : null;
@@ -391,16 +456,28 @@ const Agenda: React.FC = () => {
                       <div>
                         <div className="flex items-center gap-2 mb-1.5">
                           <span className={cn("px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wider uppercase border", conf ? `${conf.color} ${conf.border}` : "bg-gray-100 text-gray-700")}>
-                            {ev.branch}
+                            {conf ? conf.label : ev.branch}
                           </span>
+                          {ev.end_date && ev.end_date !== ev.date && (
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                              {format(parseISO(ev.date), 'dd/MM')} → {format(parseISO(ev.end_date), 'dd/MM')}
+                            </span>
+                          )}
                         </div>
                         <h3 className="font-bold text-gray-900 text-base">{ev.title}</h3>
                         {ev.description && <p className="text-sm text-gray-500 mt-1">{ev.description}</p>}
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-3 self-end md:self-center">
-                      <button 
+                    <div className="flex items-center gap-2 self-end md:self-center">
+                      <button
+                        onClick={() => openEditEventModal(ev)}
+                        className="p-2 text-gray-400 hover:text-blue-600 rounded-lg hover:bg-blue-50 transition-colors"
+                        title="Editar evento"
+                      >
+                        <Pencil size={16} />
+                      </button>
+                      <button
                         onClick={() => handleDeleteEvent(ev.id)}
                         className="p-2 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50 transition-colors"
                         title="Excluir evento"
@@ -427,11 +504,11 @@ const Agenda: React.FC = () => {
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8 animate-in fade-in duration-200">
-            <h2 className="text-xl font-bold mb-6">Criar Novo Evento</h2>
-            <form onSubmit={handleAddEvent} className="space-y-4">
+            <h2 className="text-xl font-bold mb-6">{editingEventId ? 'Editar Evento' : 'Criar Novo Evento'}</h2>
+            <form onSubmit={handleSaveEvent} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Título do Evento</label>
-                <input 
+                <input
                   required
                   type="text"
                   placeholder="Ex: Mutirão, Indaba, Passagem..."
@@ -441,28 +518,65 @@ const Agenda: React.FC = () => {
                 />
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Data</label>
-                <input 
-                  required
-                  type="date"
-                  className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                  value={newEvent.date}
-                  onChange={(e) => setNewEvent({...newEvent, date: e.target.value})}
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Início</label>
+                  <input
+                    required
+                    type="date"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                    value={newEvent.date}
+                    onChange={(e) => setNewEvent({...newEvent, date: e.target.value, end_date: (newEvent.end_date && newEvent.end_date >= e.target.value) ? newEvent.end_date : e.target.value})}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Término</label>
+                  <input
+                    required
+                    type="date"
+                    min={newEvent.date}
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                    value={newEvent.end_date}
+                    onChange={(e) => setNewEvent({...newEvent, end_date: e.target.value})}
+                  />
+                </div>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Ramo Responsável / Atrelado</label>
-                <select 
-                  className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                  value={newEvent.branch}
-                  onChange={(e) => setNewEvent({...newEvent, branch: e.target.value as any})}
-                >
-                  {Object.keys(BRANCH_CONFIG).map(name => (
-                    <option key={name} value={name}>{name}</option>
-                  ))}
-                </select>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Ramo / Etiqueta</label>
+                {!useCustomBranch ? (
+                  <select
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                    value={newEvent.branch}
+                    onChange={(e) => {
+                      if (e.target.value === '__custom__') { setUseCustomBranch(true); setCustomBranch(''); }
+                      else setNewEvent({...newEvent, branch: e.target.value});
+                    }}
+                  >
+                    {Object.keys(BRANCH_CONFIG).map(name => (
+                      <option key={name} value={name}>{BRANCH_CONFIG[name].label}</option>
+                    ))}
+                    {isAdminGeral && <option value="__custom__">＋ Criar nova etiqueta...</option>}
+                  </select>
+                ) : (
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      autoFocus
+                      placeholder="Nome da etiqueta (ex.: Diretoria, Aniversário...)"
+                      className="flex-1 px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                      value={customBranch}
+                      onChange={(e) => setCustomBranch(e.target.value)}
+                    />
+                    <button type="button" onClick={() => { setUseCustomBranch(false); setCustomBranch(''); }}
+                      className="px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-500 hover:bg-gray-50">
+                      Usar lista
+                    </button>
+                  </div>
+                )}
+                {isAdminGeral && !useCustomBranch && (
+                  <p className="text-[11px] text-gray-400 mt-1">Como Admin Geral, você pode criar uma etiqueta personalizada.</p>
+                )}
               </div>
 
               <div>
@@ -477,18 +591,18 @@ const Agenda: React.FC = () => {
               </div>
 
               <div className="flex gap-3 pt-4">
-                <button 
+                <button
                   type="button"
-                  onClick={() => setIsModalOpen(false)}
+                  onClick={() => { setIsModalOpen(false); setEditingEventId(null); }}
                   className="flex-1 py-2 border border-gray-200 rounded-lg text-sm font-medium hover:bg-gray-50"
                 >
                   Cancelar
                 </button>
-                <button 
+                <button
                   type="submit"
                   className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 shadow-sm"
                 >
-                  Adicionar Evento
+                  {editingEventId ? 'Salvar Alterações' : 'Adicionar Evento'}
                 </button>
               </div>
             </form>

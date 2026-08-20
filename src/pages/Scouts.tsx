@@ -31,7 +31,13 @@ interface ScoutMember {
 
 const Scouts: React.FC = () => {
   const { user, profile, loading: authLoading } = useAuth();
-  const [activeTab, setActiveTab] = useState<'membros' | 'pagamentos' | 'paxtu' | 'relatorios'>('membros');
+  const [activeTab, setActiveTab] = useState<'membros' | 'pagamentos' | 'presenca' | 'paxtu' | 'relatorios'>('membros');
+
+  // Controle de presença
+  const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().split('T')[0]);
+  const [attendanceMap, setAttendanceMap] = useState<Record<string, boolean>>({});
+  const [attendanceSaving, setAttendanceSaving] = useState(false);
+  const [attendanceLoaded, setAttendanceLoaded] = useState(false);
   const [members, setMembers] = useState<ScoutMember[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -138,11 +144,54 @@ const Scouts: React.FC = () => {
     inactive: members.filter(m => m.status === 'inactive').length,
   };
 
+  const loadAttendance = async (dateStr: string) => {
+    setAttendanceLoaded(false);
+    try {
+      const { data } = await supabase.from('scout_attendance').select('member_id, present').eq('date', dateStr);
+      const map: Record<string, boolean> = {};
+      (data || []).forEach((a: any) => { if (a.member_id) map[a.member_id] = a.present; });
+      setAttendanceMap(map);
+    } catch (e) {
+      console.warn('Falha ao carregar presença', e);
+      setAttendanceMap({});
+    } finally {
+      setAttendanceLoaded(true);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'presenca') loadAttendance(attendanceDate);
+  }, [activeTab, attendanceDate]);
+
+  const handleSaveAttendance = async () => {
+    if (members.length === 0) { alert('Não há membros cadastrados.'); return; }
+    setAttendanceSaving(true);
+    try {
+      const rows = members.map(m => ({
+        member_id: m.id,
+        member_name: m.name,
+        date: attendanceDate,
+        present: attendanceMap[m.id] === true,
+        user_id: profile?.id
+      }));
+      const { error } = await supabase.from('scout_attendance').upsert(rows, { onConflict: 'member_id,date' });
+      if (error) throw error;
+      alert('Presença salva com sucesso!');
+      loadAttendance(attendanceDate);
+    } catch (err: any) {
+      console.error(err);
+      alert('Erro ao salvar presença: ' + (err?.message || 'Erro inesperado') + '\n\nSe falar em tabela inexistente, rode o SQL (PARTE 8).');
+    } finally {
+      setAttendanceSaving(false);
+    }
+  };
+
   const isUserScout = profile?.role === 'user_scout';
 
   const allTabs = [
     { id: 'membros', label: 'Cadastro de Membros', icon: UserCheck },
     { id: 'pagamentos', label: 'Controle de Pagamentos (CORA)', icon: CreditCard },
+    { id: 'presenca', label: 'Controle de Presença', icon: UserCheck },
     { id: 'paxtu', label: 'Importação PAXTU', icon: Upload },
     { id: 'relatorios', label: 'Relatórios e Dashboards', icon: BarChart3 },
   ];
@@ -346,6 +395,117 @@ const Scouts: React.FC = () => {
           </div>
         </div>
       )}
+
+      {activeTab === 'presenca' && (() => {
+        const presentes = members.filter(m => attendanceMap[m.id] === true).length;
+        const ausentes = members.length - presentes;
+        return (
+          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold">Controle de Presença</h2>
+                <p className="text-xs text-gray-500">Marque os presentes na data da atividade/reunião e salve.</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <div>
+                  <label className="block text-[10px] font-black uppercase text-gray-400 mb-1">Data</label>
+                  <input
+                    type="date"
+                    className="px-3 py-2 border border-gray-200 rounded-lg text-sm"
+                    value={attendanceDate}
+                    onChange={(e) => setAttendanceDate(e.target.value)}
+                  />
+                </div>
+                <div className="flex gap-2 pt-4">
+                  <button
+                    onClick={() => setAttendanceMap(Object.fromEntries(members.map(m => [m.id, true])))}
+                    className="px-3 py-2 bg-green-50 text-green-700 rounded-lg text-xs font-bold hover:bg-green-100"
+                  >
+                    Marcar todos
+                  </button>
+                  <button
+                    onClick={() => setAttendanceMap({})}
+                    className="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg text-xs font-bold hover:bg-gray-200"
+                  >
+                    Limpar
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+              <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
+                <p className="text-[10px] font-black uppercase text-gray-400">Total de membros</p>
+                <p className="text-2xl font-black text-gray-900">{members.length}</p>
+              </div>
+              <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm bg-green-50/30">
+                <p className="text-[10px] font-black uppercase text-green-600">Presentes</p>
+                <p className="text-2xl font-black text-green-700">{presentes}</p>
+              </div>
+              <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm bg-red-50/20">
+                <p className="text-[10px] font-black uppercase text-red-500">Ausentes</p>
+                <p className="text-2xl font-black text-red-700">{ausentes}</p>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left min-w-[600px]">
+                  <thead className="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Membro</th>
+                      <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider text-center">Presença</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {members.map((m) => {
+                      const present = attendanceMap[m.id] === true;
+                      return (
+                        <tr key={m.id} className="hover:bg-gray-50">
+                          <td className="px-6 py-3">
+                            <p className="font-medium text-gray-900">{m.name}</p>
+                            <p className="text-xs text-gray-400">{m.email}</p>
+                          </td>
+                          <td className="px-6 py-3">
+                            <div className="flex gap-2 justify-center">
+                              <button
+                                onClick={() => setAttendanceMap(prev => ({ ...prev, [m.id]: true }))}
+                                className={cn("px-3 py-1.5 rounded-lg text-xs font-bold border transition-all",
+                                  present ? "bg-green-600 text-white border-green-600" : "bg-white text-gray-600 border-gray-200 hover:bg-green-50")}
+                              >
+                                Presente
+                              </button>
+                              <button
+                                onClick={() => setAttendanceMap(prev => ({ ...prev, [m.id]: false }))}
+                                className={cn("px-3 py-1.5 rounded-lg text-xs font-bold border transition-all",
+                                  !present ? "bg-red-600 text-white border-red-600" : "bg-white text-gray-600 border-gray-200 hover:bg-red-50")}
+                              >
+                                Ausente
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {members.length === 0 && (
+                      <tr><td colSpan={2} className="px-6 py-12 text-center text-gray-400">Nenhum membro cadastrado.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <div className="p-4 border-t border-gray-100 flex justify-end">
+                <button
+                  onClick={handleSaveAttendance}
+                  disabled={attendanceSaving || members.length === 0}
+                  className="px-6 py-2.5 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {attendanceSaving ? 'Salvando...' : 'Salvar Presença'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {activeTab === 'paxtu' && (
         <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-100 animate-in fade-in slide-in-from-bottom-2 duration-300">
