@@ -371,3 +371,51 @@ BEGIN
   BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.scout_attendance; EXCEPTION WHEN duplicate_object THEN NULL; END;
   BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.purchase_demands; EXCEPTION WHEN duplicate_object THEN NULL; END;
 END $$;
+
+
+-- ============================================================================
+-- PARTE 9 — Chefia (por ramo), Comunicação e fluxo de Atividades
+-- ============================================================================
+
+-- 9.1) Ramo (branch) no perfil (usado pela Chefia p/ escopo do ramo)
+ALTER TABLE public.profiles
+  ADD COLUMN IF NOT EXISTS branch text;
+
+-- 9.2) Ramo nos membros escoteiros (p/ a Chefia gerenciar só o seu ramo)
+ALTER TABLE public.scout_members
+  ADD COLUMN IF NOT EXISTS branch text;
+
+-- 9.3) Atividades + fluxo de aprovação
+CREATE TABLE IF NOT EXISTS public.activities (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name          text NOT NULL,
+  local         text,
+  description   text,
+  branch        text,                 -- ramo da atividade (do chefe criador)
+  start_at      timestamptz,          -- início (dia + hora)
+  end_at        timestamptz,          -- término (dia + hora)
+  needs_formiga boolean NOT NULL DEFAULT false,
+  has_fee       boolean NOT NULL DEFAULT false,
+  status        text NOT NULL DEFAULT 'pending_edson',
+                -- pending_cozinha | pending_financeiro | pending_edson |
+                -- pending_arte | pending_revisao | confirmed | rejected
+  steps         jsonb NOT NULL DEFAULT '{}'::jsonb,  -- dados de cada etapa
+  reject_reason text,
+  event_id      text,                 -- referência ao evento gerado na agenda
+  created_by    uuid,
+  created_by_name text,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_activities_status ON public.activities (status);
+CREATE INDEX IF NOT EXISTS idx_activities_branch ON public.activities (branch);
+
+ALTER TABLE public.activities ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "activities_all" ON public.activities;
+CREATE POLICY "activities_all" ON public.activities FOR ALL
+  USING (auth.role() = 'authenticated') WITH CHECK (auth.role() = 'authenticated');
+
+DO $$
+BEGIN
+  BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.activities; EXCEPTION WHEN duplicate_object THEN NULL; END;
+END $$;

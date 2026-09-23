@@ -19,7 +19,8 @@ interface UserProfile {
   id: string;
   email: string;
   display_name: string;
-  role: 'admin_geral' | 'admin_cantina' | 'user_cantina' | 'admin_lojinha' | 'user_lojinha' | 'admin_ativos' | 'user_ativos' | 'admin_financeiro' | 'user_financeiro' | 'admin_scout' | 'user_scout';
+  role: 'admin_geral' | 'admin_cantina' | 'user_cantina' | 'admin_lojinha' | 'user_lojinha' | 'admin_ativos' | 'user_ativos' | 'admin_financeiro' | 'user_financeiro' | 'admin_scout' | 'user_scout' | 'chefia' | 'user_comunicacao';
+  branch?: string;
   created_at?: string;
 }
 
@@ -36,21 +37,29 @@ const Users: React.FC = () => {
     username: '',
     password: '',
     displayName: '',
-    role: 'user_lojinha' as UserProfile['role']
+    role: 'user_lojinha' as UserProfile['role'],
+    branch: ''
   });
 
+  const RAMOS = ['Filhote', 'Lobinho', 'Escoteiro', 'Sênior', 'Pioneiro'];
+
   const isAdmin = profile?.role?.startsWith('admin_');
+  const isChefia = profile?.role === 'chefia';
+  const canManage = isAdmin || isChefia;
 
   useEffect(() => {
-    if (!isAdmin) return;
+    if (!canManage) return;
 
     const fetchUsers = async () => {
       let query = supabase
         .from('profiles')
         .select('*')
         .order('display_name', { ascending: true });
-      
-      if (profile?.role && profile.role !== 'admin_geral') {
+
+      if (isChefia) {
+        // Chefia só vê usuários do próprio ramo
+        query = query.eq('branch', profile?.branch || '___');
+      } else if (profile?.role && profile.role !== 'admin_geral') {
         const branch = profile.role.split('_')[1];
         if (branch) {
           query = query.like('role', `%${branch}%`);
@@ -58,7 +67,7 @@ const Users: React.FC = () => {
       }
 
       const { data, error } = await query;
-      
+
       if (error) {
         console.error('Error fetching users:', error);
       } else {
@@ -80,12 +89,12 @@ const Users: React.FC = () => {
     };
   }, [profile]);
 
-  if (!isAdmin) {
+  if (!canManage) {
     return (
       <div className="flex flex-col items-center justify-center h-[80vh] text-slate-500">
         <Shield className="w-16 h-16 mb-4 opacity-20" />
         <h2 className="text-xl font-bold">Acesso Restrito</h2>
-        <p>Apenas administradores podem gerenciar usuários.</p>
+        <p>Apenas administradores ou chefias podem gerenciar usuários.</p>
       </div>
     );
   }
@@ -99,6 +108,13 @@ const Users: React.FC = () => {
     try {
       const emailValue = newUser.username.includes('@') ? newUser.username : `${newUser.username}@scouts.local`;
 
+      if (!isChefia && newUser.role === 'chefia' && !newUser.branch) {
+        throw new Error('Selecione o ramo do usuário Chefia.');
+      }
+      const branchToSet = isChefia
+        ? (profile?.branch || null)                       // chefia cria sempre no próprio ramo
+        : (newUser.role === 'chefia' ? newUser.branch : null);
+
       const response = await fetch('/api/users/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -106,7 +122,8 @@ const Users: React.FC = () => {
           email: emailValue,
           password: newUser.password,
           displayName: newUser.displayName,
-          role: newUser.role
+          role: newUser.role,
+          branch: branchToSet
         })
       });
 
@@ -124,7 +141,7 @@ const Users: React.FC = () => {
 
       setSuccess('Usuário criado com sucesso!');
       setIsModalOpen(false);
-      setNewUser({ username: '', password: '', displayName: '', role: 'user_lojinha' });
+      setNewUser({ username: '', password: '', displayName: '', role: 'user_lojinha', branch: '' });
       
       setTimeout(() => setSuccess(''), 3000);
     } catch (err: any) {
@@ -177,7 +194,9 @@ const Users: React.FC = () => {
     admin_financeiro: 'Admin Financeiro',
     user_financeiro: 'Usuário Financeiro',
     admin_scout: 'Admin Escoteiros',
-    user_scout: 'Usuário Escoteiros'
+    user_scout: 'Usuário Escoteiros',
+    chefia: 'Chefia (por ramo)',
+    user_comunicacao: 'Comunicação'
   };
 
   const getAvailableRoles = () => {
@@ -188,7 +207,8 @@ const Users: React.FC = () => {
     if (profile?.role === 'admin_lojinha') return [['admin_lojinha', roleLabels['admin_lojinha']], ['user_lojinha', roleLabels['user_lojinha']]];
     if (profile?.role === 'admin_ativos') return [['admin_ativos', roleLabels['admin_ativos']], ['user_ativos', roleLabels['user_ativos']]];
     if (profile?.role === 'admin_financeiro') return [['admin_financeiro', roleLabels['admin_financeiro']], ['user_financeiro', roleLabels['user_financeiro']]];
-    if (profile?.role === 'admin_scout') return [['admin_scout', roleLabels['admin_scout']], ['user_scout', roleLabels['user_scout']]];
+    if (profile?.role === 'admin_scout') return [['admin_scout', roleLabels['admin_scout']], ['user_scout', roleLabels['user_scout']], ['chefia', roleLabels['chefia']]];
+    if (profile?.role === 'chefia') return [['chefia', roleLabels['chefia']], ['user_scout', roleLabels['user_scout']]];
     return [];
   };
 
@@ -356,6 +376,20 @@ const Users: React.FC = () => {
                     ))}
                   </select>
                 </div>
+
+                {!isChefia && newUser.role === 'chefia' && (
+                  <div>
+                    <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 ml-1">Ramo da Chefia</label>
+                    <select
+                      value={newUser.branch}
+                      onChange={(e) => setNewUser({...newUser, branch: e.target.value})}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-blue-100 focus:border-blue-500 transition-all outline-none font-medium appearance-none"
+                    >
+                      <option value="">Selecione o ramo...</option>
+                      {RAMOS.map(r => <option key={r} value={r}>{r}</option>)}
+                    </select>
+                  </div>
+                )}
               </div>
 
               <div className="flex gap-4 pt-4">

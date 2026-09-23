@@ -17,7 +17,8 @@ import {
   AlertCircle,
   CheckCircle2,
   DollarSign,
-  Calendar
+  Calendar,
+  ClipboardList
 } from 'lucide-react';
 import { useAuth } from '../AuthContext';
 import { cn } from '../lib/utils';
@@ -83,6 +84,13 @@ const Layout: React.FC = () => {
 
   const role = profile?.role || '';
   const isGeral = role === 'admin_geral';
+  const isChefia = role === 'chefia';
+  const isComunicacao = role === 'user_comunicacao';
+
+  // Atividades: chefia, comunicação, cozinha (cantina), financeiro e admin geral
+  if (isGeral || isChefia || isComunicacao || role.includes('cantina') || role.includes('financeiro')) {
+    navigation.push({ name: 'Atividades', href: '/atividades', icon: ClipboardList });
+  }
 
   if (isGeral || role.includes('lojinha')) {
     navigation.push({ name: '1. Lojinha', href: '/lojinha', icon: Store });
@@ -90,17 +98,17 @@ const Layout: React.FC = () => {
   if (isGeral || role.includes('cantina')) {
     navigation.push({ name: '2. Cantina', href: '/cantina', icon: Coffee });
   }
-  if (isGeral || role.includes('financeiro')) {
+  if (isGeral || role.includes('financeiro') || isChefia) {
     navigation.push({ name: '3. Financeiro', href: '/financeiro', icon: DollarSign });
   }
-  if (isGeral || role.includes('scout')) {
+  if (isGeral || role.includes('scout') || isChefia) {
     navigation.push({ name: '4. Escoteiros', href: '/scouts', icon: Users });
   }
-  if (isGeral || role.includes('ativos')) {
+  if (isGeral || role.includes('ativos') || isChefia) {
     navigation.push({ name: '5. Inventário', href: '/inventory', icon: Package });
   }
 
-  if (role.startsWith('admin_')) {
+  if (role.startsWith('admin_') || isChefia) {
     navigation.push({ name: '6. Usuários', href: '/users', icon: Settings });
   }
 

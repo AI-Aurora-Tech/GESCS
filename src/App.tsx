@@ -12,6 +12,7 @@ import Dashboard from './pages/Dashboard';
 import Login from './pages/Login';
 import Users from './pages/Users';
 import Agenda from './pages/Agenda';
+import Atividades from './pages/Atividades';
 
 import ForcePasswordChange from './components/ForcePasswordChange';
 
@@ -48,11 +49,12 @@ const App: React.FC = () => {
             <Route index element={<Dashboard />} />
             <Route path="lojinha" element={<ProtectedRoute allowedRoles={['lojinha']}><Lojinha /></ProtectedRoute>} />
             <Route path="cantina" element={<ProtectedRoute allowedRoles={['cantina', 'financeiro', 'admin_']}><Cantina /></ProtectedRoute>} />
-            <Route path="financeiro" element={<ProtectedRoute allowedRoles={['financeiro', 'admin_']}><Financeiro /></ProtectedRoute>} />
-            <Route path="scouts" element={<ProtectedRoute allowedRoles={['scout']}><Scouts /></ProtectedRoute>} />
-            <Route path="inventory" element={<ProtectedRoute allowedRoles={['ativos']}><Inventory /></ProtectedRoute>} />
+            <Route path="financeiro" element={<ProtectedRoute allowedRoles={['financeiro', 'admin_', 'chefia']}><Financeiro /></ProtectedRoute>} />
+            <Route path="scouts" element={<ProtectedRoute allowedRoles={['scout', 'chefia']}><Scouts /></ProtectedRoute>} />
+            <Route path="inventory" element={<ProtectedRoute allowedRoles={['ativos', 'chefia']}><Inventory /></ProtectedRoute>} />
             <Route path="agenda" element={<Agenda />} />
-            <Route path="users" element={<ProtectedRoute allowedRoles={['admin_']}><Users /></ProtectedRoute>} />
+            <Route path="atividades" element={<ProtectedRoute allowedRoles={['chefia', 'comunicacao', 'cantina', 'financeiro']}><Atividades /></ProtectedRoute>} />
+            <Route path="users" element={<ProtectedRoute allowedRoles={['admin_', 'chefia']}><Users /></ProtectedRoute>} />
           </Route>
         </Routes>
       </Router>

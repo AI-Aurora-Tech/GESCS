@@ -90,8 +90,12 @@ const Scouts: React.FC = () => {
     name: '',
     status: 'active' as 'active' | 'inactive' | 'exempt',
     payment_status: 'paid' as 'paid' | 'overdue' | 'exempt',
-    email: ''
+    email: '',
+    branch: ''
   });
+
+  const RAMOS = ['Filhote', 'Lobinho', 'Escoteiro', 'Sênior', 'Pioneiro'];
+  const isChefia = profile?.role === 'chefia';
 
   useEffect(() => {
     if (!user || authLoading) return;
@@ -109,11 +113,18 @@ const Scouts: React.FC = () => {
   }, [user, authLoading]);
 
   const fetchMembers = async () => {
-    const { data, error } = await supabase
+    let query = supabase
       .from('scout_members')
       .select('*')
       .order('name', { ascending: true });
-    
+
+    // Chefia só enxerga membros do próprio ramo
+    if (profile?.role === 'chefia') {
+      query = query.eq('branch', profile?.branch || '___');
+    }
+
+    const { data, error } = await query;
+
     if (data) setMembers(data);
     if (error) console.error(error);
   };
@@ -121,14 +132,16 @@ const Scouts: React.FC = () => {
   const handleAddMember = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const { error } = await supabase.from('scout_members').insert([newMember]);
+      const payload = { ...newMember, branch: isChefia ? (profile?.branch || null) : (newMember.branch || null) };
+      const { error } = await supabase.from('scout_members').insert([payload]);
       if (error) throw error;
-      
+
       setIsModalOpen(false);
-      setNewMember({ paxtu_id: '', name: '', status: 'active', payment_status: 'paid', email: '' });
+      setNewMember({ paxtu_id: '', name: '', status: 'active', payment_status: 'paid', email: '', branch: '' });
       fetchMembers();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      alert('Erro ao cadastrar membro: ' + (err?.message || '') + '\n\nSe falar em coluna inexistente, rode o SQL (PARTE 9).');
     }
   };
 
@@ -587,7 +600,7 @@ const Scouts: React.FC = () => {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">E-mail</label>
-                  <input 
+                  <input
                     required
                     type="email"
                     className="w-full px-4 py-2 border border-gray-200 rounded-lg"
@@ -596,6 +609,22 @@ const Scouts: React.FC = () => {
                   />
                 </div>
               </div>
+              {!isChefia && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Ramo</label>
+                  <select
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg"
+                    value={newMember.branch}
+                    onChange={(e) => setNewMember({...newMember, branch: e.target.value})}
+                  >
+                    <option value="">Selecione o ramo...</option>
+                    {RAMOS.map(r => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                </div>
+              )}
+              {isChefia && (
+                <p className="text-xs text-gray-400">O membro será cadastrado no ramo <strong>{profile?.branch}</strong>.</p>
+              )}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
