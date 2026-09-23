@@ -78,11 +78,18 @@ const Inventory: React.FC = () => {
   }, [user, authLoading]);
 
   const fetchAssets = async () => {
-    const { data, error } = await supabase
+    let query = supabase
       .from('assets')
       .select('*')
       .order('name', { ascending: true });
-    
+
+    // Chefia enxerga apenas os ativos do próprio ramo
+    if (profile?.role === 'chefia') {
+      query = query.eq('branch', profile?.branch || '___');
+    }
+
+    const { data, error } = await query;
+
     if (data) setAssets(data);
     if (error) console.error(error);
   };
@@ -98,8 +105,8 @@ const Inventory: React.FC = () => {
         barcode,
         description: formattedDescription,
         value: assetValue,
-        branch: newAsset.branch,
-        status: newAsset.status,
+        branch: profile?.role === 'chefia' ? (profile?.branch as any) : newAsset.branch,
+        status: profile?.role === 'chefia' ? 'pending_approval' : newAsset.status,
         date_acquired: new Date().toISOString().slice(0, 10)
       };
 

@@ -114,8 +114,8 @@ async function startServer() {
 
   // API Route to create a user
   app.post("/api/users/create", async (req, res) => {
-    const { email, password, displayName, role } = req.body;
-    
+    const { email, password, displayName, role, branch } = req.body;
+
     try {
       const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
         email,
@@ -133,9 +133,10 @@ async function startServer() {
             id: newUser.user.id,
             email,
             display_name: displayName,
-            role
+            role,
+            branch: branch || null
           });
-        
+
         if (profileError) throw profileError;
       }
 

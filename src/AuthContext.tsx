@@ -6,7 +6,8 @@ interface UserProfile {
   id: string;
   email: string;
   display_name: string;
-  role: 'admin_geral' | 'admin_cantina' | 'user_cantina' | 'admin_lojinha' | 'user_lojinha' | 'admin_ativos' | 'user_ativos' | 'admin_financeiro' | 'user_financeiro' | 'admin_scout' | 'user_scout';
+  role: 'admin_geral' | 'admin_cantina' | 'user_cantina' | 'admin_lojinha' | 'user_lojinha' | 'admin_ativos' | 'user_ativos' | 'admin_financeiro' | 'user_financeiro' | 'admin_scout' | 'user_scout' | 'chefia' | 'user_comunicacao';
+  branch?: string; // ramo (usado pela Chefia): Filhote | Lobinho | Escoteiro | Sênior | Pioneiro
   photo_url?: string;
   requires_password_change?: boolean;
 }

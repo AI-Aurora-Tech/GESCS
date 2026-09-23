@@ -16,7 +16,7 @@ export default async function handler(req: any, res: any) {
     auth: { autoRefreshToken: false, persistSession: false }
   });
 
-  const { email, password, displayName, role } = req.body;
+  const { email, password, displayName, role, branch } = req.body;
   if (!email || !password || !displayName || !role) {
     return res.status(400).json({ error: "Missing required fields" });
   }
@@ -38,9 +38,10 @@ export default async function handler(req: any, res: any) {
           id: newUser.user.id,
           email,
           display_name: displayName,
-          role
+          role,
+          branch: branch || null
         });
-      
+
       if (profileError) throw profileError;
     }
 
