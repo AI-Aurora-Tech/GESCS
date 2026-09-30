@@ -28,9 +28,15 @@ const ForcePasswordChange: React.FC = () => {
 
     setLoading(true);
     try {
-      const { error: updateError } = await supabase.auth.updateUser({
-        password: newPassword
-      });
+      // Guard against a hung request: if updateUser doesn't resolve in 15s,
+      // fail with a clear message instead of spinning forever.
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('timeout')), 15000)
+      );
+      const { error: updateError } = await Promise.race([
+        supabase.auth.updateUser({ password: newPassword }),
+        timeout,
+      ]);
 
       if (updateError) throw updateError;
 
@@ -53,7 +59,11 @@ const ForcePasswordChange: React.FC = () => {
       }, 2000);
     } catch (err: any) {
       console.error(err);
-      setError('Erro ao atualizar a senha. Tente novamente.');
+      if (err?.message === 'timeout') {
+        setError('A conexão demorou demais. Verifique sua internet e tente novamente.');
+      } else {
+        setError('Erro ao atualizar a senha. Tente novamente.');
+      }
     } finally {
       setLoading(false);
     }

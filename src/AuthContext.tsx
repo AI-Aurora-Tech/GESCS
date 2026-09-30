@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { supabase } from './supabase';
 import { User } from '@supabase/supabase-js';
 
@@ -22,53 +22,76 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// fetch() that can never hang forever: aborts after `timeoutMs`.
+const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 6000) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const activeRef = useRef(true);
+  // Which user id we already loaded a profile for — avoids re-fetching on every
+  // auth event (TOKEN_REFRESHED, USER_UPDATED, etc.).
+  const loadedForId = useRef<string | null>(null);
 
   useEffect(() => {
-    // Check active sessions and subscribe to auth changes
-    let active = true;
+    activeRef.current = true;
 
-    const fetchSession = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!active) return;
-        setUser(session?.user ?? null);
-        if (session?.user) {
-          await fetchProfile(session.user.id, session.user.email || '');
-        }
-      } catch (err) {
-        console.error("Error fetching session:", err);
-      } finally {
-        if (active) setLoading(false);
-      }
-    };
+    // Safety net: the app must never get stuck on the "Carregando..." screen.
+    // Whatever happens with the network, stop showing the loader after 8s.
+    const safety = setTimeout(() => {
+      if (activeRef.current) setLoading(false);
+    }, 8000);
 
-    fetchSession();
+    // NOTE: We rely on onAuthStateChange, which fires an INITIAL_SESSION event
+    // right after subscribing (supabase-js v2), so it covers both the first
+    // page load and every later change (login, logout, token refresh, updateUser).
+    //
+    // IMPORTANT: never run awaited Supabase/network calls *synchronously* inside
+    // this callback. supabase-js holds an internal auth lock while the callback
+    // runs; awaiting here deadlocks token refresh and updateUser — which is what
+    // caused the infinite "loading" screen and password changes that never
+    // completed. So we defer all profile work to a timeout (outside the lock).
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!activeRef.current) return;
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (!active) return;
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        try {
-          await fetchProfile(session.user.id, session.user.email || '');
-        } catch (err) {
-          console.error("Error setting profile on auth change:", err);
-        } finally {
-          if (active) setLoading(false);
-        }
-      } else {
+      const nextUser = session?.user ?? null;
+      setUser(nextUser);
+
+      if (!nextUser) {
+        loadedForId.current = null;
         setProfile(null);
-        if (active) setLoading(false);
+        setLoading(false);
+        return;
       }
+
+      // Same user we already have a profile for: nothing to fetch.
+      if (loadedForId.current === nextUser.id) {
+        setLoading(false);
+        return;
+      }
+
+      // Fetch the profile outside the auth-lock context.
+      setTimeout(() => {
+        if (!activeRef.current) return;
+        fetchProfile(nextUser.id, nextUser.email || '')
+          .then(() => { loadedForId.current = nextUser.id; })
+          .finally(() => { if (activeRef.current) setLoading(false); });
+      }, 0);
     });
 
     return () => {
-      active = false;
+      activeRef.current = false;
+      clearTimeout(safety);
       subscription.unsubscribe();
     };
   }, []);
@@ -83,14 +106,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     try {
-      console.log(`Buscando perfil para UID: ${id}`);
-      // Try to fetch via API to bypass RLS issues
-      const response = await fetch(`/api/users/profile/${id}`);
+      // Try to fetch via API to bypass RLS issues (bounded by a timeout).
+      const response = await fetchWithTimeout(`/api/users/profile/${id}`);
       if (response.ok) {
         const contentType = response.headers.get("content-type");
         if (contentType && contentType.indexOf("application/json") !== -1) {
           const data = await response.json();
-          setProfile(data as UserProfile);
+          if (activeRef.current) setProfile(data as UserProfile);
           return;
         } else {
           const text = await response.text();
@@ -110,7 +132,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (error || !data) {
         // Create profile if it doesn't exist via our API
         try {
-          const createResponse = await fetch('/api/users/create', {
+          const createResponse = await fetchWithTimeout('/api/users/create', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -120,23 +142,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               role: 'user_lojinha'
             })
           });
-          
+
           if (createResponse.ok) {
             const createContentType = createResponse.headers.get("content-type");
             if (createContentType && createContentType.includes("application/json")) {
               // Fetch it again after creation via API
-              const fetchAgain = await fetch(`/api/users/profile/${id}`);
+              const fetchAgain = await fetchWithTimeout(`/api/users/profile/${id}`);
               if (fetchAgain.ok) {
                 const fetchContentType = fetchAgain.headers.get("content-type");
                 if (fetchContentType && fetchContentType.includes("application/json")) {
                   const newData = await fetchAgain.json();
-                  setProfile(newData as UserProfile);
+                  if (activeRef.current) setProfile(newData as UserProfile);
                   return;
                 }
               }
             }
           }
-          
+
           // Fallback if API fails or returns HTML/other formats
           const newProfile = {
             id: id,
@@ -146,28 +168,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             requires_password_change: false
           };
 
-          const { data: createdData, error: createError } = await supabase
+          const { data: createdData } = await supabase
             .from('profiles')
             .upsert([newProfile])
             .select()
             .single();
 
-          if (createdData) {
-            setProfile(createdData as UserProfile);
-          } else {
-            setProfile(newProfile);
-          }
+          if (activeRef.current) setProfile((createdData as UserProfile) || newProfile);
         } catch (apiError) {
           console.error('API Error, using fallback:', apiError);
-          setProfile(fallbackProfile);
+          if (activeRef.current) setProfile(fallbackProfile);
         }
       } else {
-        setProfile(data as UserProfile);
+        if (activeRef.current) setProfile(data as UserProfile);
       }
     } catch (e: any) {
       console.error('Exception fetching profile, using fallback:', e);
-      setErrorMsg('Exception: ' + e.message);
-      setProfile(fallbackProfile);
+      if (activeRef.current) setProfile(fallbackProfile);
     }
   };
 
@@ -198,6 +215,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch (storageErr) {
         console.error("LocalStorage clearing error:", storageErr);
       }
+      loadedForId.current = null;
       setUser(null);
       setProfile(null);
       // Redirect to the origin root without path to avoid Vercel 404 for SPA.
