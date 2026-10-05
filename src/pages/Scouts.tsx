@@ -17,7 +17,7 @@ import { supabase } from '../supabase';
 import { cn } from '../lib/utils';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { useAuth } from '../AuthContext';
+import { useAuth, hasRole, isGeral as isGeralRole } from '../AuthContext';
 
 interface ScoutMember {
   id: string;
@@ -95,7 +95,9 @@ const Scouts: React.FC = () => {
   });
 
   const RAMOS = ['Filhote', 'Lobinho', 'Escoteiro', 'Sênior', 'Pioneiro'];
-  const isChefia = profile?.role === 'chefia';
+  // Chefe tem escopo do próprio ramo — exceto se também for Admin Geral / Admin Escoteiros (veem tudo).
+  const seesAllScouts = isGeralRole(profile) || hasRole(profile, 'admin_scout');
+  const isChefia = hasRole(profile, 'chefia') && !seesAllScouts;
 
   useEffect(() => {
     if (!user || authLoading) return;
@@ -118,8 +120,8 @@ const Scouts: React.FC = () => {
       .select('*')
       .order('name', { ascending: true });
 
-    // Chefia só enxerga membros do próprio ramo
-    if (profile?.role === 'chefia') {
+    // Chefe só enxerga membros do próprio ramo
+    if (isChefia) {
       query = query.eq('branch', profile?.branch || '___');
     }
 
@@ -199,7 +201,7 @@ const Scouts: React.FC = () => {
     }
   };
 
-  const isUserScout = profile?.role === 'user_scout';
+  const isUserScout = hasRole(profile, 'user_scout') && !hasRole(profile, 'chefia') && !seesAllScouts;
 
   const allTabs = [
     { id: 'membros', label: 'Cadastro de Membros', icon: UserCheck },

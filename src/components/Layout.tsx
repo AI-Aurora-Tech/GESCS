@@ -20,7 +20,7 @@ import {
   Calendar,
   ClipboardList
 } from 'lucide-react';
-import { useAuth } from '../AuthContext';
+import { useAuth, getRoles } from '../AuthContext';
 import { cn } from '../lib/utils';
 import { supabase } from '../supabase';
 import Logo from './Logo';
@@ -82,33 +82,37 @@ const Layout: React.FC = () => {
     { name: 'Agenda', href: '/agenda', icon: Calendar }
   ];
 
-  const role = profile?.role || '';
-  const isGeral = role === 'admin_geral';
-  const isChefia = role === 'chefia';
-  const isComunicacao = role === 'user_comunicacao';
+  const roles = getRoles(profile);
+  const has = (key: string) => roles.includes(key);
+  const hasMod = (sub: string) => roles.some((r) => r.includes(sub));
+  const isGeral = has('admin_geral');
+  const isChefia = has('chefia');
+  const isComunicacao = has('user_comunicacao');
+  const isMetodos = has('diretor_metodos');
+  const isAdmin = roles.some((r) => r.startsWith('admin_'));
 
-  // Atividades: chefia, comunicação, cozinha (cantina), financeiro e admin geral
-  if (isGeral || isChefia || isComunicacao || role.includes('cantina') || role.includes('financeiro')) {
+  // Atividades: chefe, comunicação, cantina, financeiro, diretor de métodos e admin geral
+  if (isGeral || isChefia || isComunicacao || isMetodos || hasMod('cantina') || hasMod('financeiro')) {
     navigation.push({ name: 'Atividades', href: '/atividades', icon: ClipboardList });
   }
 
-  if (isGeral || role.includes('lojinha')) {
+  if (isGeral || hasMod('lojinha')) {
     navigation.push({ name: '1. Lojinha', href: '/lojinha', icon: Store });
   }
-  if (isGeral || role.includes('cantina')) {
+  if (isGeral || hasMod('cantina')) {
     navigation.push({ name: '2. Cantina', href: '/cantina', icon: Coffee });
   }
-  if (isGeral || role.includes('financeiro') || isChefia) {
+  if (isGeral || hasMod('financeiro') || isChefia) {
     navigation.push({ name: '3. Financeiro', href: '/financeiro', icon: DollarSign });
   }
-  if (isGeral || role.includes('scout') || isChefia) {
+  if (isGeral || hasMod('scout') || isChefia) {
     navigation.push({ name: '4. Escoteiros', href: '/scouts', icon: Users });
   }
-  if (isGeral || role.includes('ativos') || isChefia) {
+  if (isGeral || hasMod('ativos') || isChefia) {
     navigation.push({ name: '5. Inventário', href: '/inventory', icon: Package });
   }
 
-  if (role.startsWith('admin_') || isChefia) {
+  if (isAdmin || isChefia) {
     navigation.push({ name: '6. Usuários', href: '/users', icon: Settings });
   }
 

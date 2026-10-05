@@ -16,10 +16,13 @@ export default async function handler(req: any, res: any) {
     auth: { autoRefreshToken: false, persistSession: false }
   });
 
-  const { email, password, displayName, role, branch } = req.body;
+  const { email, password, displayName, role, roles, branch } = req.body;
   if (!email || !password || !displayName || !role) {
     return res.status(400).json({ error: "Missing required fields" });
   }
+  // roles[] = todos os níveis (multi-acesso). Garante que inclui o principal.
+  const rolesArray: string[] = Array.isArray(roles) && roles.length ? Array.from(new Set(roles)) : [role];
+  if (!rolesArray.includes(role)) rolesArray.push(role);
 
   try {
     const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
@@ -39,6 +42,7 @@ export default async function handler(req: any, res: any) {
           email,
           display_name: displayName,
           role,
+          roles: rolesArray,
           branch: branch || null
         });
 

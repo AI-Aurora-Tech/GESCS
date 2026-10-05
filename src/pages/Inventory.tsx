@@ -18,7 +18,7 @@ import { supabase } from '../supabase';
 import { cn } from '../lib/utils';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { useAuth } from '../AuthContext';
+import { useAuth, hasRole, isGeral as isGeralRole } from '../AuthContext';
 import Barcode from 'react-barcode';
 import Logo from '../components/Logo';
 
@@ -37,6 +37,9 @@ interface Asset {
 
 const Inventory: React.FC = () => {
   const { user, profile, loading: authLoading } = useAuth();
+  // Chefe tem escopo do ramo nos ativos — exceto se também for Admin Geral / Admin Ativos.
+  const seesAllAssets = isGeralRole(profile) || hasRole(profile, 'admin_ativos');
+  const isChefiaScoped = hasRole(profile, 'chefia') && !seesAllAssets;
   const [activeTab, setActiveTab] = useState<'ativos' | 'demandas' | 'etiquetas' | 'baixas' | 'relatorios'>('ativos');
   const [assets, setAssets] = useState<Asset[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -83,8 +86,8 @@ const Inventory: React.FC = () => {
       .select('*')
       .order('name', { ascending: true });
 
-    // Chefia enxerga apenas os ativos do próprio ramo
-    if (profile?.role === 'chefia') {
+    // Chefe enxerga apenas os ativos do próprio ramo
+    if (isChefiaScoped) {
       query = query.eq('branch', profile?.branch || '___');
     }
 
@@ -105,8 +108,8 @@ const Inventory: React.FC = () => {
         barcode,
         description: formattedDescription,
         value: assetValue,
-        branch: profile?.role === 'chefia' ? (profile?.branch as any) : newAsset.branch,
-        status: profile?.role === 'chefia' ? 'pending_approval' : newAsset.status,
+        branch: isChefiaScoped ? (profile?.branch as any) : newAsset.branch,
+        status: isChefiaScoped ? 'pending_approval' : newAsset.status,
         date_acquired: new Date().toISOString().slice(0, 10)
       };
 
@@ -191,7 +194,7 @@ const Inventory: React.FC = () => {
     }
   };
 
-  const isUserAtivos = profile?.role === 'user_ativos';
+  const isUserAtivos = hasRole(profile, 'user_ativos') && !isChefiaScoped && !seesAllAssets;
 
   const allTabs = [
     { id: 'ativos', label: 'Gestão de Ativos', icon: Box },

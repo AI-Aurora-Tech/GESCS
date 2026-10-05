@@ -419,3 +419,38 @@ DO $$
 BEGIN
   BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.activities; EXCEPTION WHEN duplicate_object THEN NULL; END;
 END $$;
+
+
+-- ============================================================================
+-- PARTE 10 — Multi-acesso (um usuário pode ter vários níveis) e novo fluxo
+--            de Atividades (Métodos -> Financeiro[se taxa] -> Cantina[se marcado]
+--            -> Diretor Presidente -> Arte -> Revisão do Chefe)
+-- ============================================================================
+
+-- 10.1) roles[] no perfil — um usuário pode acumular níveis de acesso.
+--       O campo "role" continua existindo como acesso PRINCIPAL (compatibilidade);
+--       "roles" guarda TODOS os níveis (inclui o principal).
+ALTER TABLE public.profiles
+  ADD COLUMN IF NOT EXISTS roles text[] NOT NULL DEFAULT '{}';
+
+-- 10.1b) Semeia roles[] a partir do role atual (idempotente: só quando ainda vazio)
+UPDATE public.profiles
+  SET roles = ARRAY[role]
+  WHERE role IS NOT NULL AND (roles IS NULL OR cardinality(roles) = 0);
+
+-- 10.2) Nova caixinha "Cantina" nas atividades (substitui "Equipe Formiga").
+ALTER TABLE public.activities
+  ADD COLUMN IF NOT EXISTS needs_cantina boolean NOT NULL DEFAULT false;
+
+-- 10.2b) Migra o valor antigo de needs_formiga -> needs_cantina (idempotente)
+UPDATE public.activities
+  SET needs_cantina = true
+  WHERE needs_formiga = true AND needs_cantina = false;
+
+-- 10.3) Normaliza status antigos de atividades em andamento para o novo fluxo
+--       (idempotente — só afeta linhas que ainda estejam nos status antigos).
+UPDATE public.activities SET status = 'pending_cantina'     WHERE status = 'pending_cozinha';
+UPDATE public.activities SET status = 'pending_presidencia' WHERE status = 'pending_edson';
+-- Status novos possíveis:
+--   pending_metodos | pending_financeiro | pending_cantina |
+--   pending_presidencia | pending_arte | pending_revisao | confirmed | rejected

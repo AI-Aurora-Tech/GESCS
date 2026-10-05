@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabase';
-import { useAuth } from '../AuthContext';
+import { useAuth, isGeral as isGeralRole } from '../AuthContext';
 import { 
   Calendar as CalendarIcon, 
   ChevronLeft, 
@@ -83,7 +83,7 @@ const Agenda: React.FC = () => {
   const [useCustomBranch, setUseCustomBranch] = useState<boolean>(false);
   const [customBranch, setCustomBranch] = useState<string>('');
 
-  const isAdminGeral = profile?.role === 'admin_geral';
+  const isAdminGeral = isGeralRole(profile);
 
   // New Event Form State
   const [newEvent, setNewEvent] = useState({
