@@ -11,14 +11,23 @@ export default async function handler(req: any, res: any) {
     auth: { autoRefreshToken: false, persistSession: false }
   });
 
-  const { uid, role } = req.body;
-  
+  const { uid, role, roles, branch } = req.body;
+
+  const rolesArray: string[] | undefined = Array.isArray(roles) && roles.length
+    ? Array.from(new Set(role && !roles.includes(role) ? [...roles, role] : roles))
+    : undefined;
+
+  const patch: Record<string, any> = {};
+  if (role) patch.role = role;
+  if (rolesArray) patch.roles = rolesArray;
+  if (branch !== undefined) patch.branch = branch || null;
+
   try {
     const { error } = await supabaseAdmin
       .from("profiles")
-      .update({ role })
+      .update(patch)
       .eq("id", uid);
-    
+
     if (error) throw error;
     res.json({ success: true });
   } catch (error: any) {

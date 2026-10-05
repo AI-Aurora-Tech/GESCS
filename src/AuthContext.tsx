@@ -2,15 +2,37 @@ import React, { createContext, useContext, useEffect, useRef, useState } from 'r
 import { supabase } from './supabase';
 import { User } from '@supabase/supabase-js';
 
+export type AppRole = 'admin_geral' | 'admin_cantina' | 'user_cantina' | 'admin_lojinha' | 'user_lojinha' | 'admin_ativos' | 'user_ativos' | 'admin_financeiro' | 'user_financeiro' | 'admin_scout' | 'user_scout' | 'chefia' | 'user_comunicacao' | 'diretor_metodos';
+
 interface UserProfile {
   id: string;
   email: string;
   display_name: string;
-  role: 'admin_geral' | 'admin_cantina' | 'user_cantina' | 'admin_lojinha' | 'user_lojinha' | 'admin_ativos' | 'user_ativos' | 'admin_financeiro' | 'user_financeiro' | 'admin_scout' | 'user_scout' | 'chefia' | 'user_comunicacao';
+  role: AppRole;
+  roles?: string[]; // multi-acesso: todos os níveis do usuário (inclui o principal "role")
   branch?: string; // ramo (usado pela Chefia): Filhote | Lobinho | Escoteiro | Sênior | Pioneiro
   photo_url?: string;
   requires_password_change?: boolean;
 }
+
+// -------- Helpers de papéis (suporta múltiplos níveis por usuário) --------
+// Conjunto efetivo = role principal + roles[] (sem duplicatas).
+export const getRoles = (p?: { role?: string; roles?: string[] } | null): string[] => {
+  if (!p) return [];
+  const set = new Set<string>();
+  if (p.role) set.add(p.role);
+  (p.roles || []).forEach((r) => { if (r) set.add(r); });
+  return Array.from(set);
+};
+// Possui exatamente este nível (ex.: 'diretor_metodos', 'chefia', 'admin_geral').
+export const hasRole = (p: { role?: string; roles?: string[] } | null | undefined, key: string): boolean =>
+  getRoles(p).includes(key);
+// Possui algum nível de um módulo por substring (ex.: 'cantina', 'financeiro', 'scout').
+export const hasModule = (p: { role?: string; roles?: string[] } | null | undefined, substr: string): boolean =>
+  getRoles(p).some((r) => r.includes(substr));
+// Admin Geral (também é o "Diretor Presidente" no fluxo de atividades).
+export const isGeral = (p: { role?: string; roles?: string[] } | null | undefined): boolean =>
+  getRoles(p).includes('admin_geral');
 
 interface AuthContextType {
   user: User | null;

@@ -1,6 +1,6 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider, useAuth } from './AuthContext';
+import { AuthProvider, useAuth, getRoles } from './AuthContext';
 import Layout from './components/Layout';
 import Lojinha from './pages/Lojinha';
 import Cantina from './pages/Cantina';
@@ -24,9 +24,10 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode, allowedRoles?: strin
   if (profile?.requires_password_change) return <ForcePasswordChange />;
   
   if (allowedRoles && profile) {
-    const isGeral = profile.role === 'admin_geral';
-    const hasAccess = isGeral || allowedRoles.some(role => profile.role.includes(role));
-    
+    const roles = getRoles(profile);
+    const isGeral = roles.includes('admin_geral');
+    const hasAccess = isGeral || allowedRoles.some(allowed => roles.some(r => r.includes(allowed)));
+
     if (!hasAccess) {
       return <Navigate to="/" />;
     }
@@ -53,7 +54,7 @@ const App: React.FC = () => {
             <Route path="scouts" element={<ProtectedRoute allowedRoles={['scout', 'chefia']}><Scouts /></ProtectedRoute>} />
             <Route path="inventory" element={<ProtectedRoute allowedRoles={['ativos', 'chefia']}><Inventory /></ProtectedRoute>} />
             <Route path="agenda" element={<Agenda />} />
-            <Route path="atividades" element={<ProtectedRoute allowedRoles={['chefia', 'comunicacao', 'cantina', 'financeiro']}><Atividades /></ProtectedRoute>} />
+            <Route path="atividades" element={<ProtectedRoute allowedRoles={['chefia', 'comunicacao', 'cantina', 'financeiro', 'diretor_metodos']}><Atividades /></ProtectedRoute>} />
             <Route path="users" element={<ProtectedRoute allowedRoles={['admin_', 'chefia']}><Users /></ProtectedRoute>} />
           </Route>
         </Routes>

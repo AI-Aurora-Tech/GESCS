@@ -114,7 +114,9 @@ async function startServer() {
 
   // API Route to create a user
   app.post("/api/users/create", async (req, res) => {
-    const { email, password, displayName, role, branch } = req.body;
+    const { email, password, displayName, role, roles, branch } = req.body;
+    const rolesArray = Array.isArray(roles) && roles.length ? Array.from(new Set(roles)) : [role];
+    if (role && !rolesArray.includes(role)) rolesArray.push(role);
 
     try {
       const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
@@ -134,6 +136,7 @@ async function startServer() {
             email,
             display_name: displayName,
             role,
+            roles: rolesArray,
             branch: branch || null
           });
 
@@ -194,13 +197,20 @@ async function startServer() {
 
   // API Route to update a user's role
   app.post("/api/users/update-role", async (req, res) => {
-    const { uid, role } = req.body;
+    const { uid, role, roles, branch } = req.body;
+    const rolesArray = Array.isArray(roles) && roles.length
+      ? Array.from(new Set(role && !roles.includes(role) ? [...roles, role] : roles))
+      : undefined;
+    const patch: Record<string, any> = {};
+    if (role) patch.role = role;
+    if (rolesArray) patch.roles = rolesArray;
+    if (branch !== undefined) patch.branch = branch || null;
     try {
       const { error } = await supabaseAdmin
         .from("profiles")
-        .update({ role })
+        .update(patch)
         .eq("id", uid);
-      
+
       if (error) throw error;
       res.json({ success: true });
     } catch (error: any) {

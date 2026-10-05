@@ -17,12 +17,13 @@ import {
 } from 'recharts';
 import { supabase } from '../supabase';
 import { cn } from '../lib/utils';
-import { useAuth } from '../AuthContext';
+import { useAuth, getRoles } from '../AuthContext';
 
 const Dashboard: React.FC = () => {
   const { profile } = useAuth();
-  const role = profile?.role || '';
-  const isGeral = role === 'admin_geral';
+  const roles = getRoles(profile);
+  const isGeral = roles.includes('admin_geral');
+  const roleHas = (m: string) => roles.some(r => r.includes(m));
 
   const [stats, setStats] = useState({
     lojinhaSales: 0,
@@ -96,7 +97,7 @@ const Dashboard: React.FC = () => {
   const areaLabel: Record<string, string> = { lojinha: 'Lojinha', cantina: 'Cantina', ativos: 'Ativos' };
   const areaBadge: Record<string, string> = { lojinha: 'bg-blue-100 text-blue-700', cantina: 'bg-amber-100 text-amber-700', ativos: 'bg-orange-100 text-orange-700' };
 
-  const canSeeModule = (m: string) => isGeral || role.includes(m);
+  const canSeeModule = (m: string) => isGeral || roleHas(m);
 
   const fetchAlerts = async () => {
     const list: AlertItem[] = [];
@@ -297,8 +298,8 @@ const Dashboard: React.FC = () => {
   };
 
   const chartData = [
-    (isGeral || role.includes('lojinha')) && { name: 'Lojinha', value: Number(stats.lojinhaSales) || 0 },
-    (isGeral || role.includes('cantina') || role.includes('financeiro')) && { name: 'Cantina', value: Number(stats.cantinaBalance) || 0 },
+    (isGeral || roleHas('lojinha')) && { name: 'Lojinha', value: Number(stats.lojinhaSales) || 0 },
+    (isGeral || roleHas('cantina') || roleHas('financeiro')) && { name: 'Cantina', value: Number(stats.cantinaBalance) || 0 },
   ].filter(Boolean) as { name: string; value: number }[];
 
   return (
@@ -349,10 +350,10 @@ const Dashboard: React.FC = () => {
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {[
-          (isGeral || role.includes('lojinha')) && { label: 'Vendas Lojinha', value: `R$ ${stats.lojinhaSales.toFixed(2)}`, icon: Store, color: 'text-blue-600', bg: 'bg-blue-100' },
-          (isGeral || role.includes('cantina') || role.includes('financeiro')) && { label: 'Saldo Cantina', value: `R$ ${stats.cantinaBalance.toFixed(2)}`, icon: TrendingUp, color: 'text-green-600', bg: 'bg-green-100' },
-          (isGeral || role.includes('scout')) && { label: 'Escoteiros Ativos', value: stats.activeScouts.toString(), icon: Users, color: 'text-purple-600', bg: 'bg-purple-100' },
-          (isGeral || role.includes('ativos')) && { label: 'Ativos Patrimônio', value: stats.totalAssets.toString(), icon: Package, color: 'text-orange-600', bg: 'bg-orange-100' },
+          (isGeral || roleHas('lojinha')) && { label: 'Vendas Lojinha', value: `R$ ${stats.lojinhaSales.toFixed(2)}`, icon: Store, color: 'text-blue-600', bg: 'bg-blue-100' },
+          (isGeral || roleHas('cantina') || roleHas('financeiro')) && { label: 'Saldo Cantina', value: `R$ ${stats.cantinaBalance.toFixed(2)}`, icon: TrendingUp, color: 'text-green-600', bg: 'bg-green-100' },
+          (isGeral || roleHas('scout')) && { label: 'Escoteiros Ativos', value: stats.activeScouts.toString(), icon: Users, color: 'text-purple-600', bg: 'bg-purple-100' },
+          (isGeral || roleHas('ativos')) && { label: 'Ativos Patrimônio', value: stats.totalAssets.toString(), icon: Package, color: 'text-orange-600', bg: 'bg-orange-100' },
         ].filter(Boolean).map((stat: any) => (
           <div key={stat.label} className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
             <div className="flex items-center justify-between mb-4">
