@@ -97,11 +97,8 @@ const Users: React.FC = () => {
         .select('*')
         .order('display_name', { ascending: true });
 
-      if (isChefia && !isGeral && !isAdmin) {
-        // Chefe "puro" só vê usuários do próprio ramo
-        query = query.eq('branch', profile?.branch || '___');
-      }
-
+      // A filtragem por área/ramo é feita no cliente (canSeeUser), pois um usuário
+      // pode ter vários papéis e as linhas antigas podem não ter "roles" preenchido.
       const { data, error } = await query;
       if (error) {
         console.error('Error fetching users:', error);
@@ -248,7 +245,24 @@ const Users: React.FC = () => {
     }
   };
 
-  const filteredUsers = users.filter(u =>
+  // Quem pode ver/editar quais usuários:
+  // - Admin Geral vê TODOS.
+  // - Chefe "puro" vê apenas usuários do próprio ramo.
+  // - Admin de módulo (e chefe que também é admin) vê apenas usuários cujos
+  //   níveis pertençam à sua área (o mesmo conjunto que ele pode atribuir),
+  //   além dos do seu ramo se for chefe.
+  const canSeeUser = (u: UserProfile) => {
+    if (isGeral) return true;
+    const uRoles = getRoles(u);
+    if (isChefia && !isAdmin) {
+      return !!profile?.branch && u.branch === profile?.branch;
+    }
+    const inArea = uRoles.some(r => availableRoles.includes(r));
+    const sameBranch = isChefia && !!profile?.branch && u.branch === profile?.branch;
+    return inArea || sameBranch;
+  };
+
+  const filteredUsers = users.filter(u => canSeeUser(u)).filter(u =>
     u.display_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     u.email.toLowerCase().includes(searchTerm.toLowerCase())
   );

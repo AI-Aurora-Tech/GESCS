@@ -27,7 +27,8 @@ import {
   Snowflake,
   Eye,
   ShoppingCart,
-  MessageCircle
+  MessageCircle,
+  RotateCcw
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { useAuth } from '../AuthContext';
@@ -89,6 +90,7 @@ const Lojinha: React.FC = () => {
   const [isDemandModalOpen, setIsDemandModalOpen] = useState(false);
   const [selectedDemand, setSelectedDemand] = useState<any | null>(null);
   const [isDemandDetailsModalOpen, setIsDemandDetailsModalOpen] = useState(false);
+  const [demandEdit, setDemandEdit] = useState<{ title: string; description: string; priority: string } | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [selectedProductIds, setSelectedProductIds] = useState<Set<string>>(new Set());
   const [stockAction, setStockAction] = useState<'entry' | 'exit'>('entry');
@@ -144,6 +146,9 @@ const Lojinha: React.FC = () => {
   const [currentTransactionRef, setCurrentTransactionRef] = useState('');
   const [pdvModalAmount, setPdvModalAmount] = useState<number>(0);
   const [activePaymentMethod, setActivePaymentMethod] = useState<'credit_card' | 'debit_card' | 'pix' | 'cash'>('credit_card');
+  // Trava contra cliques repetidos (evita registrar a mesma venda várias vezes)
+  const savingSaleRef = useRef(false);
+  const [savingSale, setSavingSale] = useState(false);
 
   // Doação & Fiado states
   const [saleType, setSaleType] = useState<'normal' | 'donation' | 'fiado'>('normal');
@@ -247,7 +252,12 @@ const Lojinha: React.FC = () => {
       setPaymentStatus('approved');
       return;
     }
+    // Trava anti-duplicidade: se já está salvando uma venda, ignora cliques extras.
+    if (savingSaleRef.current) return;
+    savingSaleRef.current = true;
+    setSavingSale(true);
     try {
+      const methodLabel = methodStr === 'cash' ? 'Dinheiro' : methodStr === 'pix' ? 'PIX' : methodStr === 'none' ? '' : 'PagBank';
       const itemsText = cart.map(i => `${i.quantity}x ${i.product.name}`).join(', ');
       const totalAmount = getCartTotal();
       const currentSaleType = saleType;
@@ -262,7 +272,7 @@ const Lojinha: React.FC = () => {
           ? `Doação Ref: ${ref} — Jovem: ${donationYouthName} (Aprov.: ${saleApprover})`
           : currentSaleType === 'fiado'
           ? `Fiado Ref: ${ref} — Chefe: ${fiadoChefeName} (Aprov.: ${saleApprover}, vence ${fiadoDueDate})`
-          : `Venda PDV Ref: ${ref} (${methodStr === 'cash' ? 'Dinheiro' : 'PagBank'})`;
+          : `Venda PDV Ref: ${ref}${methodLabel ? ` (${methodLabel})` : ''}`;
 
       // 1. Decrement stock for each item in DB AND check stock for Auto-Demand
       for (const item of cart) {
@@ -360,7 +370,7 @@ const Lojinha: React.FC = () => {
       // 2. Registro financeiro / registro especial conforme o tipo de venda
       if (currentSaleType === 'normal') {
         // Venda normal: lança receita no financeiro (comportamento original)
-        const fullDescription = `PDV Lojinha: ${itemsText} - Ref #${ref} (${methodStr === 'cash' ? 'Dinheiro' : 'PagBank'})`;
+        const fullDescription = `PDV Lojinha: ${itemsText} - Ref #${ref}${methodLabel ? ` (${methodLabel})` : ''}`;
         const { error: finError } = await supabase.from('financial_records').insert([{
           type: 'income',
           amount: totalAmount,
@@ -411,20 +421,83 @@ const Lojinha: React.FC = () => {
       fetchPagBankSales();
 
       if (currentSaleType === 'donation') {
-        alert('Doação registrada com sucesso! Os itens foram baixados do estoque, sem movimentação financeira.');
+        alert(`✅ DOAÇÃO CONFIRMADA!\n\nRef ${ref} — os itens foram baixados do estoque, sem movimentação financeira.`);
       } else if (currentSaleType === 'fiado') {
-        alert('Venda fiada registrada! Ficará como "a receber" até ser marcada como paga na aba Vendas → Fiados & Doações.');
+        alert(`✅ FIADO CONFIRMADO!\n\nRef ${ref} — ficará como "a receber" até ser marcado como pago na aba Vendas → Fiados & Doações.`);
+      } else {
+        alert(`✅ VENDA CONFIRMADA!\n\nRef ${ref}${methodLabel ? ` • ${methodLabel}` : ''} • Total R$ ${totalAmount.toFixed(2)}\n\nNão é preciso clicar de novo.`);
       }
     } catch (err: any) {
       console.error("Erro ao registrar a conclusão da venda:", err);
       setPaymentError(err.message || 'Erro ao persistir a venda.');
       setPaymentStatus('failed');
       alert('Erro ao registrar a venda: ' + (err?.message || 'Erro inesperado') + '\n\nSe a mensagem falar em permissão/policy (RLS), rode o script SQL de permissões no Supabase.');
+    } finally {
+      savingSaleRef.current = false;
+      setSavingSale(false);
+    }
+  };
+
+  // Extrai o "Ref" (ex.: LJ-123456) das observações de uma movimentação
+  const parseSaleRef = (notes?: string): string | null => {
+    if (!notes) return null;
+    const m = notes.match(/Ref:?\s*#?\s*([A-Za-z]{2,4}-\d+)/);
+    return m ? m[1] : null;
+  };
+
+  // Cancela uma venda/saída: devolve os itens ao estoque e remove os lançamentos
+  // financeiros / vendas especiais ligados ao mesmo Ref. Reverte a venda inteira.
+  const handleCancelSale = async (t: any) => {
+    const ref = parseSaleRef(t?.notes);
+    const group = ref
+      ? transactions.filter(x => x.type === 'exit' && parseSaleRef(x.notes) === ref)
+      : [t];
+
+    const itemsLabel = group.map(x => `${x.quantity}x ${x.products?.name || 'item'}`).join(', ');
+    const confirmMsg = ref
+      ? `Cancelar a venda ${ref}?\n\nItens: ${itemsLabel}\n\nO estoque será devolvido e os lançamentos financeiros desta venda serão removidos. Esta ação não pode ser desfeita.`
+      : `Cancelar esta movimentação (${t.quantity}x ${t.products?.name || 'item'})?\n\nO estoque será devolvido. Esta ação não pode ser desfeita.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      for (const x of group) {
+        if (x.product_id) {
+          // Devolve ao estoque
+          const { data: dbProd } = await supabase.from('products').select('stock').eq('id', x.product_id).single();
+          const current = dbProd ? Number(dbProd.stock) || 0 : 0;
+          await supabase.from('products').update({ stock: current + (Number(x.quantity) || 0) }).eq('id', x.product_id);
+          // Registra a devolução (auditoria) como entrada/ajuste
+          await supabase.from('stock_transactions').insert([{
+            product_id: x.product_id,
+            type: 'entry',
+            quantity: x.quantity,
+            user_id: profile?.id,
+            sale_type: 'adjustment',
+            notes: `Cancelamento${ref ? ` da venda ${ref}` : ''} — devolução ao estoque`
+          }]);
+        }
+        // Remove a movimentação original de saída
+        await supabase.from('stock_transactions').delete().eq('id', x.id);
+      }
+
+      // Remove lançamentos financeiros e vendas especiais ligados ao Ref
+      if (ref) {
+        await supabase.from('financial_records').delete().eq('module', 'lojinha').ilike('description', `%${ref}%`);
+        await supabase.from('lojinha_special_sales').delete().eq('reference', ref);
+      }
+
+      fetchData();
+      fetchPagBankSales();
+      alert(`Venda${ref ? ` ${ref}` : ''} cancelada. O estoque foi devolvido.`);
+    } catch (err: any) {
+      console.error('Erro ao cancelar a venda:', err);
+      alert('Erro ao cancelar a venda: ' + (err?.message || 'Erro inesperado'));
     }
   };
 
   const handlePdvCheckout = async () => {
     if (cart.length === 0) return;
+    if (savingSaleRef.current) return; // evita duplo clique
     const total = getCartTotal();
     const reference = `LJ-${Date.now().toString().slice(-6)}`;
     setCurrentTransactionRef(reference);
@@ -446,9 +519,11 @@ const Lojinha: React.FC = () => {
       return;
     }
 
-    if (activePaymentMethod === 'cash') {
+    // Dinheiro e PIX registram a venda na hora (o PIX é confirmado na maquininha/QR
+    // antes de clicar) — assim a venda SEMPRE aparece nas movimentações.
+    if (activePaymentMethod === 'cash' || activePaymentMethod === 'pix') {
       setPaymentStatus('sending');
-      await completePdvSale(reference, 'cash');
+      await completePdvSale(reference, activePaymentMethod);
     } else {
       setPaymentStatus('sending');
       try {
@@ -1201,6 +1276,29 @@ const Lojinha: React.FC = () => {
     } catch (err: any) {
       console.error(err);
       alert(`Erro ao atualizar demanda: ${err?.message || 'Erro inesperado'}`);
+    }
+  };
+
+  const handleUpdateDemand = async () => {
+    if (!demandEdit || !selectedDemand) return;
+    if (!demandEdit.title.trim()) { alert('Informe o título da demanda.'); return; }
+    const priorityMap: Record<string, string> = { 'Baixa': 'low', 'Média': 'medium', 'Alta': 'high' };
+    try {
+      const { error } = await supabase
+        .from('lojinha_demands')
+        .update({
+          title: demandEdit.title.trim(),
+          description: demandEdit.description,
+          priority: priorityMap[demandEdit.priority] || 'medium'
+        })
+        .eq('id', selectedDemand.id);
+      if (error) throw error;
+      setSelectedDemand({ ...selectedDemand, title: demandEdit.title.trim(), description: demandEdit.description, priority: priorityMap[demandEdit.priority] || 'medium' });
+      setDemandEdit(null);
+      fetchData();
+    } catch (err: any) {
+      console.error(err);
+      alert(`Erro ao editar a demanda: ${err?.message || 'Erro inesperado'}`);
     }
   };
 
@@ -2454,14 +2552,17 @@ const Lojinha: React.FC = () => {
                     {/* Checkout CTA */}
                     <button
                       onClick={handlePdvCheckout}
+                      disabled={savingSale || cart.length === 0}
                       className={cn(
-                        "w-full py-3 text-white rounded-xl font-bold transition-all shadow-lg flex items-center justify-center gap-2",
+                        "w-full py-3 text-white rounded-xl font-bold transition-all shadow-lg flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed",
                         saleType === 'donation' ? "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200" :
                         saleType === 'fiado' ? "bg-amber-600 hover:bg-amber-700 shadow-amber-200" :
                         "bg-blue-600 hover:bg-blue-700 shadow-blue-200"
                       )}
                     >
-                      {saleType === 'donation' ? (
+                      {savingSale ? (
+                        <><div className="w-5 h-5 border-2 border-white/40 border-t-white rounded-full animate-spin" /> Registrando...</>
+                      ) : saleType === 'donation' ? (
                         <><Gift size={18} /> Registrar Doação</>
                       ) : saleType === 'fiado' ? (
                         <><Clock size={18} /> Registrar Fiado (R$ {getCartTotal().toFixed(2)})</>
@@ -2804,12 +2905,13 @@ const Lojinha: React.FC = () => {
                       Recusar
                     </button>
                     <button
+                      disabled={savingSale}
                       onClick={async () => {
                         await completePdvSale(currentTransactionRef, 'PagBank');
                       }}
-                      className="flex-1 py-2 bg-green-500 hover:bg-green-600 rounded-xl text-xs font-black text-white shadow-lg shadow-green-200"
+                      className="flex-1 py-2 bg-green-500 hover:bg-green-600 disabled:opacity-60 disabled:cursor-not-allowed rounded-xl text-xs font-black text-white shadow-lg shadow-green-200"
                     >
-                      Aprovar Venda
+                      {savingSale ? 'Registrando...' : 'Aprovar Venda'}
                     </button>
                   </div>
                 </div>
@@ -2860,6 +2962,7 @@ const Lojinha: React.FC = () => {
                   <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Qtd</th>
                   <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Observação / Detalhe</th>
                   <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Usuário</th>
+                  <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -2896,6 +2999,17 @@ const Lojinha: React.FC = () => {
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-500">
                         {t.profiles?.display_name || t.userName || 'Sistema'}
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        {t.type === 'exit' && (
+                          <button
+                            onClick={() => handleCancelSale(t)}
+                            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-600 hover:bg-red-100 inline-flex items-center gap-1.5"
+                            title="Cancelar venda e devolver ao estoque"
+                          >
+                            <RotateCcw size={13} /> Cancelar
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
@@ -3623,18 +3737,53 @@ const Lojinha: React.FC = () => {
                   {selectedDemand.created_at ? format(new Date(selectedDemand.created_at), 'dd/MM/yyyy HH:mm') : ''}
                 </span>
               </div>
-              <button 
-                onClick={() => setIsDemandDetailsModalOpen(false)}
+              <button
+                onClick={() => { setIsDemandDetailsModalOpen(false); setDemandEdit(null); }}
                 className="text-gray-400 hover:text-gray-600 text-lg font-bold"
               >
                 ✕
               </button>
             </div>
 
-            <h3 className="text-xl font-bold text-gray-900 mb-2">{selectedDemand.title}</h3>
-            <div className="p-4 bg-gray-50 rounded-xl border border-gray-100 mb-6 max-h-[200px] overflow-y-auto">
-              <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{selectedDemand.description}</p>
-            </div>
+            {demandEdit ? (
+              <div className="space-y-3 mb-6">
+                <input
+                  type="text"
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg font-bold"
+                  value={demandEdit.title}
+                  onChange={(e) => setDemandEdit({ ...demandEdit, title: e.target.value })}
+                  placeholder="Título da demanda"
+                />
+                <textarea
+                  rows={4}
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg text-sm"
+                  value={demandEdit.description}
+                  onChange={(e) => setDemandEdit({ ...demandEdit, description: e.target.value })}
+                  placeholder="Descrição"
+                />
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Prioridade</label>
+                  <select
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg text-sm"
+                    value={demandEdit.priority}
+                    onChange={(e) => setDemandEdit({ ...demandEdit, priority: e.target.value })}
+                  >
+                    {['Baixa', 'Média', 'Alta'].map(p => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setDemandEdit(null)} className="flex-1 py-2 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold hover:bg-slate-200">Cancelar edição</button>
+                  <button onClick={handleUpdateDemand} className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700">Salvar alterações</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <h3 className="text-xl font-bold text-gray-900 mb-2">{selectedDemand.title}</h3>
+                <div className="p-4 bg-gray-50 rounded-xl border border-gray-100 mb-6 max-h-[200px] overflow-y-auto">
+                  <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{selectedDemand.description}</p>
+                </div>
+              </>
+            )}
 
             {/* Ciência / Compra / Congelar (Édson e equipe) */}
             <div className="mb-5 p-4 bg-slate-50 rounded-xl border border-slate-100 space-y-3">
@@ -3716,16 +3865,32 @@ const Lojinha: React.FC = () => {
               </div>
 
               <div className="flex justify-between items-center pt-6 border-t border-gray-100 gap-3">
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteDemand(selectedDemand.id)}
+                    className="px-4 py-2 bg-red-50 text-red-650 hover:bg-red-105 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5"
+                  >
+                    <Trash2 size={14} /> Excluir
+                  </button>
+                  {!demandEdit && (
+                    <button
+                      type="button"
+                      onClick={() => setDemandEdit({
+                        title: selectedDemand.title || '',
+                        description: selectedDemand.description || '',
+                        priority: (selectedDemand.priority === 'high' || selectedDemand.priority === 'Alta') ? 'Alta'
+                          : (selectedDemand.priority === 'low' || selectedDemand.priority === 'Baixa') ? 'Baixa' : 'Média'
+                      })}
+                      className="px-4 py-2 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5"
+                    >
+                      <Pencil size={14} /> Editar
+                    </button>
+                  )}
+                </div>
                 <button
                   type="button"
-                  onClick={() => handleDeleteDemand(selectedDemand.id)}
-                  className="px-4 py-2 bg-red-50 text-red-650 hover:bg-red-105 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5"
-                >
-                  <Trash2 size={14} /> Excluir Demanda
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsDemandDetailsModalOpen(false)}
+                  onClick={() => { setIsDemandDetailsModalOpen(false); setDemandEdit(null); }}
                   className="px-6 py-2 bg-slate-900 text-white hover:bg-slate-800 rounded-lg text-xs font-bold transition-all shadow-sm"
                 >
                   Fechar
