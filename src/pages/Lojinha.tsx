@@ -105,6 +105,7 @@ const Lojinha: React.FC = () => {
   const [printQuantities, setPrintQuantities] = useState<Record<string, number>>({});
   const [reportPeriod, setReportPeriod] = useState<'all' | 'today' | 'week' | 'month'>('month');
   const [movFilter, setMovFilter] = useState<'all' | 'venda' | 'saida' | 'entrada'>('all');
+  const [selectedMovIds, setSelectedMovIds] = useState<Set<string>>(new Set());
   const [printMode, setPrintMode] = useState<'labels' | 'report'>('labels');
 
   // New Product Form
@@ -438,62 +439,82 @@ const Lojinha: React.FC = () => {
     }
   };
 
-  // Extrai o "Ref" (ex.: LJ-123456) das observações de uma movimentação
+  // Extrai o "Ref" (ex.: LJ-123456) das observações — usado só para rotular.
   const parseSaleRef = (notes?: string): string | null => {
     if (!notes) return null;
     const m = notes.match(/Ref:?\s*#?\s*([A-Za-z]{2,4}-\d+)/);
     return m ? m[1] : null;
   };
 
-  // Cancela uma venda/saída: devolve os itens ao estoque e remove os lançamentos
-  // financeiros / vendas especiais ligados ao mesmo Ref. Reverte a venda inteira.
-  const handleCancelSale = async (t: any) => {
-    const ref = parseSaleRef(t?.notes);
-    const group = ref
-      ? transactions.filter(x => x.type === 'exit' && parseSaleRef(x.notes) === ref)
-      : [t];
-
-    const itemsLabel = group.map(x => `${x.quantity}x ${x.products?.name || 'item'}`).join(', ');
-    const confirmMsg = ref
-      ? `Cancelar a venda ${ref}?\n\nItens: ${itemsLabel}\n\nO estoque será devolvido e os lançamentos financeiros desta venda serão removidos. Esta ação não pode ser desfeita.`
-      : `Cancelar esta movimentação (${t.quantity}x ${t.products?.name || 'item'})?\n\nO estoque será devolvido. Esta ação não pode ser desfeita.`;
-    if (!window.confirm(confirmMsg)) return;
-
-    try {
-      for (const x of group) {
-        if (x.product_id) {
-          // Devolve ao estoque
-          const { data: dbProd } = await supabase.from('products').select('stock').eq('id', x.product_id).single();
-          const current = dbProd ? Number(dbProd.stock) || 0 : 0;
-          await supabase.from('products').update({ stock: current + (Number(x.quantity) || 0) }).eq('id', x.product_id);
-          // Registra a devolução (auditoria) como entrada/ajuste
-          await supabase.from('stock_transactions').insert([{
-            product_id: x.product_id,
-            type: 'entry',
-            quantity: x.quantity,
-            user_id: profile?.id,
-            sale_type: 'adjustment',
-            notes: `Cancelamento${ref ? ` da venda ${ref}` : ''} — devolução ao estoque`
+  // Cancela EXATAMENTE as movimentações passadas (por id). Para cada uma:
+  // devolve o item ao estoque, lança um estorno financeiro (só para venda normal)
+  // e remove aquela linha. Não usa o "Ref" para agrupar — assim nunca afeta
+  // outras vendas que por acaso tenham o mesmo Ref.
+  const cancelTransactions = async (txs: any[]) => {
+    for (const x of txs) {
+      if (x.product_id) {
+        const { data: dbProd } = await supabase.from('products').select('stock').eq('id', x.product_id).single();
+        const current = dbProd ? Number(dbProd.stock) || 0 : 0;
+        await supabase.from('products').update({ stock: current + (Number(x.quantity) || 0) }).eq('id', x.product_id);
+      }
+      // Estorno financeiro apenas para venda normal (doação não tem receita;
+      // fiado só vira receita quando é marcado como pago).
+      const mov = classifyMov(x);
+      if (mov === 'venda' && x.sale_type !== 'fiado') {
+        const unit = Number(x.products?.sale_price) || Number(x.products?.price) || 0;
+        const amount = unit * (Number(x.quantity) || 0);
+        if (amount > 0) {
+          const ref = parseSaleRef(x.notes);
+          await supabase.from('financial_records').insert([{
+            type: 'expense',
+            amount,
+            category: 'Cancelamento de Venda',
+            description: `Cancelamento: ${x.quantity}x ${x.products?.name || 'item'}${ref ? ` (Ref ${ref})` : ''}`,
+            module: 'lojinha',
+            branch: 'Grupo',
+            date: new Date().toISOString()
           }]);
         }
-        // Remove a movimentação original de saída
-        await supabase.from('stock_transactions').delete().eq('id', x.id);
       }
+      // Remove SOMENTE esta linha (por id)
+      await supabase.from('stock_transactions').delete().eq('id', x.id);
+    }
+  };
 
-      // Remove lançamentos financeiros e vendas especiais ligados ao Ref
-      if (ref) {
-        await supabase.from('financial_records').delete().eq('module', 'lojinha').ilike('description', `%${ref}%`);
-        await supabase.from('lojinha_special_sales').delete().eq('reference', ref);
-      }
-
+  // Cancela UMA movimentação (apenas aquela linha).
+  const handleCancelSale = async (t: any) => {
+    if (!window.confirm(`Cancelar esta movimentação?\n\n${t.quantity}x ${t.products?.name || 'item'}\n\nApenas esta linha será removida e o estoque devolvido. Esta ação não pode ser desfeita.`)) return;
+    try {
+      await cancelTransactions([t]);
+      setSelectedMovIds(prev => { const n = new Set(prev); n.delete(t.id); return n; });
       fetchData();
       fetchPagBankSales();
-      alert(`Venda${ref ? ` ${ref}` : ''} cancelada. O estoque foi devolvido.`);
+      alert('Movimentação cancelada. O estoque foi devolvido.');
     } catch (err: any) {
       console.error('Erro ao cancelar a venda:', err);
       alert('Erro ao cancelar a venda: ' + (err?.message || 'Erro inesperado'));
     }
   };
+
+  // Cancela VÁRIAS movimentações selecionadas de uma vez.
+  const handleCancelSelected = async () => {
+    const txs = transactions.filter(t => selectedMovIds.has(t.id) && t.type === 'exit');
+    if (!txs.length) { alert('Selecione ao menos uma venda/saída para cancelar.'); return; }
+    if (!window.confirm(`Cancelar ${txs.length} movimentação(ões) selecionada(s)?\n\nO estoque será devolvido. Esta ação não pode ser desfeita.`)) return;
+    try {
+      await cancelTransactions(txs);
+      setSelectedMovIds(new Set());
+      fetchData();
+      fetchPagBankSales();
+      alert(`${txs.length} movimentação(ões) cancelada(s). O estoque foi devolvido.`);
+    } catch (err: any) {
+      console.error('Erro ao cancelar as vendas:', err);
+      alert('Erro ao cancelar as vendas: ' + (err?.message || 'Erro inesperado'));
+    }
+  };
+
+  const toggleMovSelected = (id: string) =>
+    setSelectedMovIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
   const handlePdvCheckout = async () => {
     if (cart.length === 0) return;
@@ -2933,29 +2954,61 @@ const Lojinha: React.FC = () => {
                 <h3 className="text-lg font-bold">Movimentações — Entradas, Saídas e Vendas</h3>
                 <p className="text-xs text-gray-500">Todas as vendas, entradas e saídas de estoque da lojinha.</p>
               </div>
-              <div className="flex bg-gray-100 p-1 rounded-lg self-start">
-                {[
-                  { id: 'all', label: 'Todos' },
-                  { id: 'venda', label: 'Venda' },
-                  { id: 'saida', label: 'Saída' },
-                  { id: 'entrada', label: 'Entrada' }
-                ].map(f => (
+              <div className="flex flex-wrap items-center gap-2 self-start">
+                {selectedMovIds.size > 0 && (
                   <button
-                    key={f.id}
-                    onClick={() => setMovFilter(f.id as any)}
-                    className={cn(
-                      "px-3 py-1.5 text-xs font-bold rounded-md transition-all",
-                      movFilter === f.id ? "bg-white text-blue-600 shadow-sm" : "text-gray-500 hover:text-gray-900"
-                    )}
+                    onClick={handleCancelSelected}
+                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-red-600 text-white hover:bg-red-700 inline-flex items-center gap-1.5"
                   >
-                    {f.label}
+                    <RotateCcw size={13} /> Cancelar {selectedMovIds.size} selecionada(s)
                   </button>
-                ))}
+                )}
+                <div className="flex bg-gray-100 p-1 rounded-lg">
+                  {[
+                    { id: 'all', label: 'Todos' },
+                    { id: 'venda', label: 'Venda' },
+                    { id: 'saida', label: 'Saída' },
+                    { id: 'entrada', label: 'Entrada' }
+                  ].map(f => (
+                    <button
+                      key={f.id}
+                      onClick={() => setMovFilter(f.id as any)}
+                      className={cn(
+                        "px-3 py-1.5 text-xs font-bold rounded-md transition-all",
+                        movFilter === f.id ? "bg-white text-blue-600 shadow-sm" : "text-gray-500 hover:text-gray-900"
+                      )}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
             <table className="w-full text-left">
               <thead className="bg-gray-50">
                 <tr>
+                  <th className="px-4 py-4 w-10">
+                    {(() => {
+                      const exitRows = transactions.filter(t => (movFilter === 'all' || classifyMov(t) === movFilter) && t.type === 'exit');
+                      const allSelected = exitRows.length > 0 && exitRows.every(t => selectedMovIds.has(t.id));
+                      return (
+                        <input
+                          type="checkbox"
+                          className="rounded text-red-600"
+                          title="Selecionar todas as vendas/saídas visíveis"
+                          checked={allSelected}
+                          onChange={(e) => {
+                            setSelectedMovIds(prev => {
+                              const n = new Set(prev);
+                              if (e.target.checked) exitRows.forEach(t => n.add(t.id));
+                              else exitRows.forEach(t => n.delete(t.id));
+                              return n;
+                            });
+                          }}
+                        />
+                      );
+                    })()}
+                  </th>
                   <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Data</th>
                   <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Produto</th>
                   <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Tipo</th>
@@ -2969,7 +3022,17 @@ const Lojinha: React.FC = () => {
                 {transactions.filter(t => movFilter === 'all' || classifyMov(t) === movFilter).map((t) => {
                   const mov = classifyMov(t);
                   return (
-                    <tr key={t.id} className="hover:bg-gray-50">
+                    <tr key={t.id} className={cn("hover:bg-gray-50", selectedMovIds.has(t.id) && "bg-red-50/40")}>
+                      <td className="px-4 py-4 w-10">
+                        {t.type === 'exit' && (
+                          <input
+                            type="checkbox"
+                            className="rounded text-red-600"
+                            checked={selectedMovIds.has(t.id)}
+                            onChange={() => toggleMovSelected(t.id)}
+                          />
+                        )}
+                      </td>
                       <td className="px-6 py-4 text-sm text-gray-500">
                         {t.created_at ? format(new Date(t.created_at), 'dd/MM/yyyy HH:mm') : 'Pendente'}
                       </td>
