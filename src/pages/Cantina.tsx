@@ -19,7 +19,7 @@ import {
   Users
 } from 'lucide-react';
 import { supabase } from '../supabase';
-import { cn } from '../lib/utils';
+import { cn, genRef } from '../lib/utils';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useAuth } from '../AuthContext';
@@ -260,7 +260,7 @@ const Cantina: React.FC = () => {
   const handleCantinaCheckout = async () => {
     if (cantinaCart.length === 0) return;
     const total = getCantinaCartTotal();
-    const reference = `CT-${Date.now().toString().slice(-6)}`;
+    const reference = genRef('CT');
     setCantinaCurrentTransactionRef(reference);
     setCantinaPaymentError('');
 

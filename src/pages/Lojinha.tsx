@@ -33,7 +33,7 @@ import {
 import { supabase } from '../supabase';
 import { useAuth } from '../AuthContext';
 import Barcode from 'react-barcode';
-import { cn } from '../lib/utils';
+import { cn, genRef } from '../lib/utils';
 import { format } from 'date-fns';
 import Logo from '../components/Logo';
 import Users from './Users';
@@ -442,10 +442,10 @@ const Lojinha: React.FC = () => {
     }
   };
 
-  // Extrai o "Ref" (ex.: LJ-123456) das observações — usado só para rotular.
+  // Extrai o "Ref" (ex.: LJ-121025-134530-A1B2) das observações — usado só para rotular.
   const parseSaleRef = (notes?: string): string | null => {
     if (!notes) return null;
-    const m = notes.match(/Ref:?\s*#?\s*([A-Za-z]{2,4}-\d+)/);
+    const m = notes.match(/Ref:?\s*#?\s*([A-Za-z]{2,4}-[0-9A-Za-z-]+)/);
     return m ? m[1] : null;
   };
 
@@ -523,7 +523,7 @@ const Lojinha: React.FC = () => {
     if (cart.length === 0) return;
     if (savingSaleRef.current) return; // evita duplo clique
     const total = getCartTotal();
-    const reference = `LJ-${Date.now().toString().slice(-6)}`;
+    const reference = genRef('LJ');
     setCurrentTransactionRef(reference);
     setPaymentError('');
 
@@ -894,7 +894,7 @@ const Lojinha: React.FC = () => {
 
       // Registro da doação
       await supabase.from('lojinha_special_sales').insert([{
-        reference: `DOA-${Date.now().toString().slice(-6)}`,
+        reference: genRef('DOA'),
         sale_type: 'donation',
         total_amount: (prod.sale_price || prod.price || 0) * qty,
         items: [{ name: prod.name, size: prod.size || null, quantity: qty, price: prod.sale_price || prod.price || 0 }],
