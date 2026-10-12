@@ -37,6 +37,8 @@ import { cn } from '../lib/utils';
 import { format } from 'date-fns';
 import Logo from '../components/Logo';
 import Users from './Users';
+import DateRangeFilter, { DateRange } from '../components/DateRangeFilter';
+import { fmtBRL, inRange, rangeLabel, downloadCSV, openPrintableReport } from '../lib/report';
 import { 
   BarChart, 
   Bar, 
@@ -104,6 +106,7 @@ const Lojinha: React.FC = () => {
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [printQuantities, setPrintQuantities] = useState<Record<string, number>>({});
   const [reportPeriod, setReportPeriod] = useState<'all' | 'today' | 'week' | 'month'>('month');
+  const [reportRange, setReportRange] = useState<DateRange>({ start: null, end: null });
   const [movFilter, setMovFilter] = useState<'all' | 'venda' | 'saida' | 'entrada'>('all');
   const [selectedMovIds, setSelectedMovIds] = useState<Set<string>>(new Set());
   const [printMode, setPrintMode] = useState<'labels' | 'report'>('labels');
@@ -3084,23 +3087,7 @@ const Lojinha: React.FC = () => {
       )}
 
       {activeTab === 'relatorios' && (() => {
-        const filteredTrans = transactions.filter(t => {
-          if (!t.created_at) return false;
-          const tDate = new Date(t.created_at);
-          const now = new Date();
-          if (reportPeriod === 'today') {
-            return tDate.toDateString() === now.toDateString();
-          }
-          if (reportPeriod === 'week') {
-            const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-            return tDate >= oneWeekAgo;
-          }
-          if (reportPeriod === 'month') {
-            const oneMonthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-            return tDate >= oneMonthAgo;
-          }
-          return true; // all
-        });
+        const filteredTrans = transactions.filter(t => t.created_at && inRange(t.created_at, reportRange.start, reportRange.end));
 
         const lastTrans = filteredTrans.filter(t => classifyMov(t) === 'venda');
         const totalRevenue = lastTrans.reduce((acc, t) => {
@@ -3141,48 +3128,92 @@ const Lojinha: React.FC = () => {
         });
         const topSelling = Object.values(salesStats).sort((a, b) => b.qty - a.qty).slice(0, 5);
 
+        const periodo = rangeLabel(reportRange.start, reportRange.end);
+
+        const exportExcel = () => {
+          const headers = ['Data', 'Produto', 'Tamanho', 'Qtd', 'Valor unit. (R$)', 'Total (R$)'];
+          const rows = lastTrans.map(t => {
+            const price = Number(t.products?.sale_price) || Number(t.products?.price) || 0;
+            return [
+              format(new Date(t.created_at), 'dd/MM/yyyy HH:mm'),
+              t.products?.name || 'Desconhecido',
+              t.products?.size || '',
+              Number(t.quantity) || 0,
+              price.toFixed(2).replace('.', ','),
+              (price * (Number(t.quantity) || 0)).toFixed(2).replace('.', ','),
+            ];
+          });
+          rows.push(['', '', '', String(qtySold), 'TOTAL', totalRevenue.toFixed(2).replace('.', ',')]);
+          downloadCSV(`relatorio_lojinha_${new Date().toISOString().slice(0, 10)}`, headers, rows);
+        };
+
+        const exportPDF = () => {
+          openPrintableReport({
+            title: 'Relatório de Vendas — Lojinha',
+            subtitle: 'Vendas reais (não inclui doações, ajustes ou entradas)',
+            periodLabel: periodo,
+            filename: `relatorio_lojinha_${new Date().toISOString().slice(0, 10)}`,
+            kpis: [
+              { label: 'Receita Total', value: fmtBRL(totalRevenue), tone: 'green' },
+              { label: 'Itens Vendidos', value: String(qtySold), tone: 'blue' },
+              { label: 'Vendas (linhas)', value: String(lastTrans.length), tone: 'gray' },
+              { label: 'Valor em estoque (custo)', value: fmtBRL(totalInventoryValue), tone: 'gray' },
+            ],
+            tables: [
+              {
+                title: 'Produtos mais vendidos',
+                headers: ['Produto', 'Qtd', 'Total'],
+                align: ['left', 'right', 'right'],
+                rows: topSelling.map(s => [`${s.name}${s.size ? ` (${s.size})` : ''}`, s.qty, fmtBRL(s.total)]),
+                emptyText: 'Nenhuma venda no período.',
+              },
+              {
+                title: 'Vendas detalhadas',
+                headers: ['Data', 'Produto', 'Qtd', 'Valor unit.', 'Total'],
+                align: ['left', 'left', 'right', 'right', 'right'],
+                rows: lastTrans.map(t => {
+                  const price = Number(t.products?.sale_price) || Number(t.products?.price) || 0;
+                  return [
+                    format(new Date(t.created_at), 'dd/MM/yyyy HH:mm'),
+                    `${t.products?.name || 'Desconhecido'}${t.products?.size ? ` (${t.products.size})` : ''}`,
+                    Number(t.quantity) || 0,
+                    fmtBRL(price),
+                    fmtBRL(price * (Number(t.quantity) || 0)),
+                  ];
+                }),
+                totals: ['', 'TOTAL', qtySold, '', fmtBRL(totalRevenue)],
+                emptyText: 'Nenhuma venda no período.',
+              },
+            ],
+          });
+        };
+
         return (
           <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
             {/* Header & General Filter */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
               <div>
                 <h2 className="text-xl font-black text-gray-900">Relatórios & Análise de Vendas</h2>
-                <p className="text-xs text-gray-500">Acompanhe métricas financeiras, vendas e níveis críticos de estoque.</p>
+                <p className="text-xs text-gray-500">Selecione o período (calendário) e exporte para PDF ou Excel.</p>
               </div>
-              <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-                <div className="flex bg-gray-100 p-1 rounded-lg">
-                  {[
-                    { id: 'today', label: 'Hoje' },
-                    { id: 'week', label: '7 Dias' },
-                    { id: 'month', label: '30 Dias' },
-                    { id: 'all', label: 'Tudo' }
-                  ].map(p => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => setReportPeriod(p.id as any)}
-                      className={cn(
-                        "px-3 py-1.5 text-xs font-bold rounded-md transition-all",
-                        reportPeriod === p.id ? "bg-white text-blue-600 shadow-sm" : "text-gray-500 hover:text-gray-900"
-                      )}
-                    >
-                      {p.label}
-                    </button>
-                  ))}
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3 w-full md:w-auto">
+                <DateRangeFilter value={reportRange} onChange={setReportRange} />
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={exportPDF}
+                    className="flex items-center px-4 py-2 bg-red-600 text-white rounded-xl text-xs font-bold hover:bg-red-700 transition shadow-md shadow-red-100"
+                  >
+                    <FileText size={14} className="mr-1.5" /> PDF
+                  </button>
+                  <button
+                    type="button"
+                    onClick={exportExcel}
+                    className="flex items-center px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-bold hover:bg-emerald-700 transition shadow-md shadow-emerald-100"
+                  >
+                    <Download size={14} className="mr-1.5" /> Excel
+                  </button>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPrintMode('report');
-                    setTimeout(() => {
-                      window.print();
-                    }, 150);
-                  }}
-                  className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700 transition shadow-md shadow-blue-100"
-                >
-                  <FileText size={14} className="mr-2" /> Exportar PDF (A4)
-                </button>
               </div>
             </div>
 

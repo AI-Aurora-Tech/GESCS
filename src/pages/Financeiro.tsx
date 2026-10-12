@@ -11,12 +11,12 @@ import {
   Building,
   Target,
   FileText,
-  FileSpreadsheet,
-  Presentation,
-  Image
+  FileSpreadsheet
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { cn } from '../lib/utils';
+import DateRangeFilter, { DateRange } from '../components/DateRangeFilter';
+import { fmtBRL, inRange, rangeLabel, downloadCSV, openPrintableReport } from '../lib/report';
 import {
   BarChart,
   Bar,
@@ -47,13 +47,13 @@ const Financeiro: React.FC = () => {
   const [records, setRecords] = useState<FinancialRecord[]>([]);
   const [filter, setFilter] = useState({
     module: 'all',
-    branch: 'all',
-    dateRange: 'month'
+    branch: 'all'
   });
+  const [range, setRange] = useState<DateRange>({ start: null, end: null });
   const [bankFilter, setBankFilter] = useState<'all' | 'pagbank' | 'cora' | 'cash'>('all');
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
-  const [exportFormat, setExportFormat] = useState<'PDF' | 'Excel' | 'PowerPoint' | 'Imagem' | null>(null);
+  const [exportFormat, setExportFormat] = useState<'PDF' | 'Excel' | null>(null);
   
   const [viewingAttachment, setViewingAttachment] = useState<string | null>(null);
 
@@ -70,50 +70,86 @@ const Financeiro: React.FC = () => {
     return { cleanDescription: desc, attachment: null };
   };
 
-  const handleExportFile = (format: 'PDF' | 'Excel' | 'PowerPoint' | 'Imagem') => {
+  // Agrupa os lan\u00E7amentos filtrados por categoria (para o relat\u00F3rio detalhado)
+  const buildCategoryTable = () => {
+    const map: Record<string, { income: number; expense: number }> = {};
+    filteredRecords.forEach(r => {
+      const key = r.category || '(sem categoria)';
+      if (!map[key]) map[key] = { income: 0, expense: 0 };
+      if (r.type === 'income') map[key].income += Number(r.amount) || 0;
+      else map[key].expense += Number(r.amount) || 0;
+    });
+    return Object.entries(map)
+      .sort((a, b) => (b[1].income + b[1].expense) - (a[1].income + a[1].expense))
+      .map(([cat, v]) => [cat, fmtBRL(v.income), fmtBRL(v.expense), fmtBRL(v.income - v.expense)]);
+  };
+
+  const handleExportFile = (fmtType: 'PDF' | 'Excel') => {
     setIsExporting(true);
-    setExportFormat(format);
+    setExportFormat(fmtType);
+    const stamp = new Date().toISOString().slice(0, 10);
+    const periodo = rangeLabel(range.start, range.end);
+    const moduleLabel = modules.find(m => m.id === filter.module)?.label || 'Todos';
+
     setTimeout(() => {
       setIsExporting(false);
       setIsExportModalOpen(false);
       setExportFormat(null);
 
-      if (format === 'Excel') {
-        // Create CSV payload
-        const headers = ['Data', 'Tipo', 'Categoria', 'Descricao', 'Valor', 'Modulo', 'Ramo'];
-        const rows = records.map(r => [
-          r.date,
-          r.type === 'income' ? 'Entrada' : 'Saida',
+      if (fmtType === 'Excel') {
+        const headers = ['Data', 'Tipo', 'Categoria', 'Descri\u00E7\u00E3o', 'Valor (R$)', 'M\u00F3dulo', 'Ramo', 'Conta'];
+        const rows = filteredRecords.map(r => [
+          format(new Date(r.date), 'dd/MM/yyyy HH:mm'),
+          r.type === 'income' ? 'Entrada' : 'Sa\u00EDda',
           r.category,
-          r.description || '',
-          r.amount,
+          extractAttachment(r).cleanDescription,
+          (Number(r.amount) || 0).toFixed(2).replace('.', ','),
           r.module,
-          r.branch || ''
+          r.branch || '',
+          getBank(r)
         ]);
-        const csvContent = "data:text/csv;charset=utf-8,\uFEFF" 
-          + [headers.join(';'), ...rows.map(e => e.map(val => `"${val.toString().replace(/"/g, '""')}"`).join(';'))].join('\n');
-        const encodedUri = encodeURI(csvContent);
-        const link = document.createElement("a");
-        link.setAttribute("href", encodedUri);
-        link.setAttribute("download", `relatorio_financeiro_${new Date().toISOString().slice(0, 10)}.csv`);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      } else if (format === 'PDF') {
-        window.print();
+        // Linha de totais
+        rows.push(['', '', '', 'TOTAIS', `Entradas: ${totalIncome.toFixed(2).replace('.', ',')} | Sa\u00EDdas: ${totalExpense.toFixed(2).replace('.', ',')} | Saldo: ${balance.toFixed(2).replace('.', ',')}`, '', '', '']);
+        downloadCSV(`relatorio_financeiro_${stamp}`, headers, rows);
       } else {
-        // PowerPoint and Imagem download simulated files
-        const content = `Relatorio Financeiro Sempre Alerta\nData: ${new Date().toLocaleDateString('pt-BR')}\nFormato: ${format}\nRegistros exportados: ${records.length}`;
-        const blob = new Blob([content], { type: 'text/plain' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.setAttribute("href", url);
-        link.setAttribute("download", `relatorio_financeiro_${new Date().toISOString().slice(0, 10)}.${format === 'PowerPoint' ? 'pptx' : 'png'}`);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        openPrintableReport({
+          title: 'Relat\u00F3rio Financeiro Consolidado',
+          subtitle: `M\u00F3dulo: ${moduleLabel}${filter.branch !== 'all' ? ` \u2022 Ramo: ${filter.branch}` : ''}${bankFilter !== 'all' ? ` \u2022 Conta: ${bankFilter}` : ''}`,
+          periodLabel: periodo,
+          filename: `relatorio_financeiro_${stamp}`,
+          kpis: [
+            { label: 'Entradas', value: fmtBRL(totalIncome), tone: 'green' },
+            { label: 'Sa\u00EDdas', value: fmtBRL(totalExpense), tone: 'red' },
+            { label: 'Saldo do per\u00EDodo', value: fmtBRL(balance), tone: balance >= 0 ? 'blue' : 'red' },
+            { label: 'Lan\u00E7amentos', value: String(filteredRecords.length), tone: 'gray' },
+          ],
+          tables: [
+            {
+              title: 'Resumo por categoria',
+              headers: ['Categoria', 'Entradas', 'Sa\u00EDdas', 'Saldo'],
+              align: ['left', 'right', 'right', 'right'],
+              rows: buildCategoryTable(),
+              emptyText: 'Nenhum lan\u00E7amento no per\u00EDodo.',
+            },
+            {
+              title: 'Lan\u00E7amentos detalhados',
+              headers: ['Data', 'Tipo', 'Categoria', 'Descri\u00E7\u00E3o', 'Conta', 'Valor'],
+              align: ['left', 'left', 'left', 'left', 'left', 'right'],
+              rows: filteredRecords.map(r => [
+                format(new Date(r.date), 'dd/MM/yyyy HH:mm'),
+                r.type === 'income' ? 'Entrada' : 'Sa\u00EDda',
+                r.category,
+                extractAttachment(r).cleanDescription,
+                getBank(r),
+                `${r.type === 'income' ? '+' : '-'} ${fmtBRL(r.amount)}`,
+              ]),
+              totals: ['', '', '', '', 'Saldo', fmtBRL(balance)],
+              emptyText: 'Nenhum lan\u00E7amento no per\u00EDodo.',
+            },
+          ],
+        });
       }
-    }, 1500);
+    }, 300);
   };
 
   const getBank = (record: FinancialRecord) => {
@@ -166,8 +202,9 @@ const Financeiro: React.FC = () => {
   const cashExpense = records.filter(r => r.type === 'expense' && getBank(r) === 'Dinheiro').reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
   const cashBalance = cashIncome - cashExpense;
 
-  // Prune list content according to active bank tab selection
+  // Prune list content according to active bank tab selection + período (range)
   const filteredRecords = records.filter(r => {
+    if (!inRange(r.date, range.start, range.end)) return false;
     if (bankFilter === 'all') return true;
     const rBank = getBank(r).toLowerCase();
     if (bankFilter === 'pagbank' && rBank === 'pagbank') return true;
@@ -307,6 +344,11 @@ const Financeiro: React.FC = () => {
             </h3>
             
             <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Período</label>
+                <DateRangeFilter value={range} onChange={setRange} className="!flex-col !items-stretch" />
+              </div>
+
               <div>
                 <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Módulo</label>
                 <div className="grid grid-cols-1 gap-2">
@@ -565,34 +607,11 @@ const Financeiro: React.FC = () => {
                     </div>
                   </button>
 
-                  {/* PowerPoint option */}
-                  <button
-                    onClick={() => handleExportFile('PowerPoint')}
-                    className="p-4 border border-gray-200 rounded-xl hover:border-orange-500 hover:bg-orange-50/20 text-left transition-all flex flex-col gap-3 group"
-                  >
-                    <div className="p-3 bg-orange-100 text-orange-600 rounded-xl group-hover:scale-110 transition-transform self-start">
-                      <Presentation size={20} />
-                    </div>
-                    <div>
-                      <h4 className="font-bold text-gray-900 text-sm">PowerPoint (.pptx)</h4>
-                      <p className="text-xs text-gray-500 mt-1">Slides prontos com os gráficos.</p>
-                    </div>
-                  </button>
-
-                  {/* Imagem option */}
-                  <button
-                    onClick={() => handleExportFile('Imagem')}
-                    className="p-4 border border-gray-200 rounded-xl hover:border-indigo-500 hover:bg-indigo-50/20 text-left transition-all flex flex-col gap-3 group"
-                  >
-                    <div className="p-3 bg-indigo-100 text-indigo-600 rounded-xl group-hover:scale-110 transition-transform self-start">
-                      <Image size={20} />
-                    </div>
-                    <div>
-                      <h4 className="font-bold text-gray-900 text-sm">Imagem (.png)</h4>
-                      <p className="text-xs text-gray-500 mt-1">Exportar gráficos para relatórios.</p>
-                    </div>
-                  </button>
                 </div>
+
+                <p className="text-xs text-gray-400">
+                  O relatório usa o período e os filtros selecionados ({rangeLabel(range.start, range.end)}). O PDF abre em uma nova aba para imprimir ou salvar.
+                </p>
 
                 <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
                   <button
