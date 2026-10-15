@@ -41,8 +41,12 @@ const STATUS_COLOR: Record<string, string> = {
   pending_edson: 'bg-purple-100 text-purple-700'
 };
 
-// Monta a ordem das etapas conforme as caixas marcadas
+// Monta a ordem das etapas conforme as caixas marcadas.
+// Regra: atividade NORMAL (sem Cantina e sem Taxa) vai direto para a Comunicação
+// (arte) e depois para a revisão do chefe — pula Métodos, Financeiro, Cantina e
+// Presidência. Qualquer atividade com Cantina e/ou Taxa segue o fluxo completo.
 const buildOrder = (needsCantina: boolean, hasFee: boolean): StepKey[] => {
+  if (!needsCantina && !hasFee) return ['arte', 'revisao'];
   const order: StepKey[] = ['metodos'];
   if (hasFee) order.push('financeiro');
   if (needsCantina) order.push('cantina');
@@ -130,9 +134,12 @@ const Atividades: React.FC = () => {
     if (form.end_at < form.start_at) { alert('O término não pode ser antes do início.'); return; }
 
     const branch = profile?.branch || 'Grupo Geral';
+    // 1ª etapa do fluxo: normalmente "Diretor de Métodos", mas atividade normal
+    // (sem Cantina e sem Taxa) começa direto na Comunicação (arte).
+    const initialStatus = stepToStatus(buildOrder(form.needs_cantina, form.has_fee)[0]);
 
     try {
-      // 1) Cria a atividade — sempre começa no Diretor de Métodos
+      // 1) Cria a atividade e entra no fluxo de aprovação
       const { data: created, error } = await supabase.from('activities').insert([{
         name: form.name.trim(),
         local: form.local,
@@ -143,7 +150,7 @@ const Atividades: React.FC = () => {
         needs_cantina: form.needs_cantina,
         needs_formiga: form.needs_cantina, // mantém espelho p/ retrocompat
         has_fee: form.has_fee,
-        status: 'pending_metodos',
+        status: initialStatus,
         steps: {},
         created_by: profile?.id,
         created_by_name: profile?.display_name
@@ -166,7 +173,11 @@ const Atividades: React.FC = () => {
       setIsCreateOpen(false);
       setForm({ name: '', local: '', description: '', start_at: '', end_at: '', needs_cantina: false, has_fee: false });
       fetchActivities();
-      alert('Atividade criada! Ela já apareceu no calendário e entrou no fluxo de aprovação (começa pelo Diretor de Métodos).');
+      alert(
+        (!form.needs_cantina && !form.has_fee)
+          ? 'Atividade criada! Como é uma atividade normal (sem Cantina e sem Taxa), ela foi direto para a Comunicação montar a arte. Já apareceu no calendário.'
+          : 'Atividade criada! Ela já apareceu no calendário e entrou no fluxo de aprovação (começa pelo Diretor de Métodos).'
+      );
     } catch (err: any) {
       console.error(err);
       alert('Erro ao criar atividade: ' + (err?.message || '') + '\n\nSe falar em coluna/tabela inexistente, rode o SQL (PARTE 9 e PARTE 10).');
@@ -237,14 +248,14 @@ const Atividades: React.FC = () => {
         needs_cantina: patch.needs_cantina,
         needs_formiga: patch.needs_cantina,
         has_fee: patch.has_fee,
-        status: 'pending_metodos',
+        status: stepToStatus(buildOrder(patch.needs_cantina, patch.has_fee)[0]),
         reject_reason: null,
         updated_at: new Date().toISOString()
       }).eq('id', a.id);
       if (error) throw error;
       setSelected(null);
       fetchActivities();
-      alert('Atividade corrigida e reenviada! Ela voltou para o início do fluxo (Diretor de Métodos).');
+      alert('Atividade corrigida e reenviada! Ela voltou para o início do fluxo.');
     } catch (err: any) {
       console.error(err);
       alert('Erro ao reenviar: ' + (err?.message || 'Erro inesperado'));
@@ -258,7 +269,7 @@ const Atividades: React.FC = () => {
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Atividades</h1>
-          <p className="text-gray-500 text-sm">Fluxo: Métodos → Financeiro (se taxa) → Cantina (se marcado) → Diretor Presidente → Arte → Revisão do Chefe.</p>
+          <p className="text-gray-500 text-sm">Fluxo: Métodos → Financeiro (se taxa) → Cantina (se marcada) → Diretor Presidente → Arte → Revisão. Atividade normal (sem Cantina e sem Taxa) vai direto para a Arte (Comunicação).</p>
         </div>
         {canCreate && (
           <button onClick={() => setIsCreateOpen(true)}

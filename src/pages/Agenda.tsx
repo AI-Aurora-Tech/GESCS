@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabase';
-import { useAuth, isGeral as isGeralRole } from '../AuthContext';
+import { useAuth, isGeral as isGeralRole, getRoles, hasRole } from '../AuthContext';
 import { 
   Calendar as CalendarIcon, 
   ChevronLeft, 
@@ -84,6 +84,12 @@ const Agenda: React.FC = () => {
   const [customBranch, setCustomBranch] = useState<string>('');
 
   const isAdminGeral = isGeralRole(profile);
+  // Quem pode criar/editar/excluir eventos na Agenda: Admin Geral, qualquer admin
+  // de módulo e a Comunicação. Chefe (e demais) apenas visualizam — as atividades
+  // do chefe entram na agenda automaticamente pela tela de Atividades.
+  const canManageAgenda = isAdminGeral
+    || getRoles(profile).some(r => r.startsWith('admin_'))
+    || hasRole(profile, 'user_comunicacao');
 
   // New Event Form State
   const [newEvent, setNewEvent] = useState({
@@ -271,12 +277,14 @@ const Agenda: React.FC = () => {
               <><Grid size={16} className="mr-2" /> Modo Calendário</>
             )}
           </button>
-          <button
-            onClick={openNewEventModal}
-            className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors shadow-sm"
-          >
-            <Plus size={16} className="mr-2" /> Novo Evento
-          </button>
+          {canManageAgenda && (
+            <button
+              onClick={openNewEventModal}
+              className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors shadow-sm"
+            >
+              <Plus size={16} className="mr-2" /> Novo Evento
+            </button>
+          )}
         </div>
       </header>
 
@@ -469,22 +477,24 @@ const Agenda: React.FC = () => {
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 self-end md:self-center">
-                      <button
-                        onClick={() => openEditEventModal(ev)}
-                        className="p-2 text-gray-400 hover:text-blue-600 rounded-lg hover:bg-blue-50 transition-colors"
-                        title="Editar evento"
-                      >
-                        <Pencil size={16} />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteEvent(ev.id)}
-                        className="p-2 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50 transition-colors"
-                        title="Excluir evento"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
+                    {canManageAgenda && (
+                      <div className="flex items-center gap-2 self-end md:self-center">
+                        <button
+                          onClick={() => openEditEventModal(ev)}
+                          className="p-2 text-gray-400 hover:text-blue-600 rounded-lg hover:bg-blue-50 transition-colors"
+                          title="Editar evento"
+                        >
+                          <Pencil size={16} />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteEvent(ev.id)}
+                          className="p-2 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50 transition-colors"
+                          title="Excluir evento"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 );
               })}
