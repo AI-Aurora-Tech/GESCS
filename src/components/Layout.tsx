@@ -102,7 +102,7 @@ const Layout: React.FC = () => {
   if (isGeral || hasMod('cantina')) {
     navigation.push({ name: '2. Cantina', href: '/cantina', icon: Coffee });
   }
-  if (isGeral || hasMod('financeiro') || isChefia) {
+  if (isGeral || hasMod('financeiro')) {
     navigation.push({ name: '3. Financeiro', href: '/financeiro', icon: DollarSign });
   }
   if (isGeral || hasMod('scout') || isChefia) {

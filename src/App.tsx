@@ -50,7 +50,7 @@ const App: React.FC = () => {
             <Route index element={<Dashboard />} />
             <Route path="lojinha" element={<ProtectedRoute allowedRoles={['lojinha']}><Lojinha /></ProtectedRoute>} />
             <Route path="cantina" element={<ProtectedRoute allowedRoles={['cantina', 'financeiro', 'admin_']}><Cantina /></ProtectedRoute>} />
-            <Route path="financeiro" element={<ProtectedRoute allowedRoles={['financeiro', 'admin_', 'chefia']}><Financeiro /></ProtectedRoute>} />
+            <Route path="financeiro" element={<ProtectedRoute allowedRoles={['financeiro', 'admin_']}><Financeiro /></ProtectedRoute>} />
             <Route path="scouts" element={<ProtectedRoute allowedRoles={['scout', 'chefia']}><Scouts /></ProtectedRoute>} />
             <Route path="inventory" element={<ProtectedRoute allowedRoles={['ativos', 'chefia']}><Inventory /></ProtectedRoute>} />
             <Route path="agenda" element={<Agenda />} />
