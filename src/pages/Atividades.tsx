@@ -9,8 +9,10 @@ import {
 } from 'lucide-react';
 
 // Etapas do fluxo, em ordem. financeiro (se taxa) e cantina (se marcado) são condicionais.
-// Fluxo: Diretor de Métodos -> Financeiro[se taxa] -> Cantina[se marcado] ->
-//        Diretor Presidente (Eddy / Admin Geral) -> Arte (Comunicação) -> Revisão do Chefe
+// Fluxo: Financeiro[se taxa] -> Cantina[se marcado] -> Diretor Presidente
+//        (Eddy / Admin Geral) -> Arte (Comunicação) -> Revisão do Chefe.
+// (O Diretor de Métodos foi removido do fluxo — 'metodos' fica só para
+//  retrocompatibilidade com atividades antigas em andamento.)
 type StepKey = 'metodos' | 'financeiro' | 'cantina' | 'presidencia' | 'arte' | 'revisao';
 const STEP_KEYS: StepKey[] = ['metodos', 'financeiro', 'cantina', 'presidencia', 'arte', 'revisao'];
 
@@ -43,11 +45,12 @@ const STATUS_COLOR: Record<string, string> = {
 
 // Monta a ordem das etapas conforme as caixas marcadas.
 // Regra: atividade NORMAL (sem Cantina e sem Taxa) vai direto para a Comunicação
-// (arte) e depois para a revisão do chefe — pula Métodos, Financeiro, Cantina e
-// Presidência. Qualquer atividade com Cantina e/ou Taxa segue o fluxo completo.
+// (arte) e depois para a revisão do chefe. Caso contrário o fluxo começa no
+// Financeiro (se Taxa) / Cantina (se marcada) — NÃO passa mais pelo Diretor de
+// Métodos — e segue para o Diretor Presidente, Arte e Revisão do chefe.
 const buildOrder = (needsCantina: boolean, hasFee: boolean): StepKey[] => {
   if (!needsCantina && !hasFee) return ['arte', 'revisao'];
-  const order: StepKey[] = ['metodos'];
+  const order: StepKey[] = [];
   if (hasFee) order.push('financeiro');
   if (needsCantina) order.push('cantina');
   order.push('presidencia', 'arte', 'revisao');
@@ -176,7 +179,7 @@ const Atividades: React.FC = () => {
       alert(
         (!form.needs_cantina && !form.has_fee)
           ? 'Atividade criada! Como é uma atividade normal (sem Cantina e sem Taxa), ela foi direto para a Comunicação montar a arte. Já apareceu no calendário.'
-          : 'Atividade criada! Ela já apareceu no calendário e entrou no fluxo de aprovação (começa pelo Diretor de Métodos).'
+          : 'Atividade criada! Ela já apareceu no calendário e entrou no fluxo de aprovação.'
       );
     } catch (err: any) {
       console.error(err);
@@ -269,7 +272,7 @@ const Atividades: React.FC = () => {
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Atividades</h1>
-          <p className="text-gray-500 text-sm">Fluxo: Métodos → Financeiro (se taxa) → Cantina (se marcada) → Diretor Presidente → Arte → Revisão. Atividade normal (sem Cantina e sem Taxa) vai direto para a Arte (Comunicação).</p>
+          <p className="text-gray-500 text-sm">Fluxo: Financeiro (se taxa) → Cantina (se marcada) → Diretor Presidente → Arte → Revisão. Atividade normal (sem Cantina e sem Taxa) vai direto para a Arte (Comunicação).</p>
         </div>
         {canCreate && (
           <button onClick={() => setIsCreateOpen(true)}
