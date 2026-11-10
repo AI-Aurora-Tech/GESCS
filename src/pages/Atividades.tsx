@@ -77,7 +77,9 @@ const Atividades: React.FC = () => {
   const [form, setForm] = useState({
     name: '', local: '', description: '',
     start_at: '', end_at: '',
-    needs_cantina: false, has_fee: false
+    needs_cantina: false, has_fee: false,
+    // Formulário da taxa (preenchido pelo solicitante quando "Terá taxa")
+    fee: { valores: '', qtd_chefes: '', qtd_interessados: '', obs: '' }
   });
 
   const fetchActivities = async () => {
@@ -135,11 +137,16 @@ const Atividades: React.FC = () => {
     if (!form.name.trim()) { alert('Informe o nome da atividade.'); return; }
     if (!form.start_at || !form.end_at) { alert('Informe início e término.'); return; }
     if (form.end_at < form.start_at) { alert('O término não pode ser antes do início.'); return; }
+    if (form.has_fee && !form.fee.valores.trim()) { alert('Como a atividade terá taxa, preencha o formulário da taxa (ao menos os valores).'); return; }
 
     const branch = profile?.branch || 'Grupo Geral';
-    // 1ª etapa do fluxo: normalmente "Diretor de Métodos", mas atividade normal
-    // (sem Cantina e sem Taxa) começa direto na Comunicação (arte).
+    // 1ª etapa do fluxo: Financeiro (se taxa) / Cantina (se marcada), senão vai
+    // direto para a Comunicação (atividade normal).
     const initialStatus = stepToStatus(buildOrder(form.needs_cantina, form.has_fee)[0]);
+    // Quando há taxa, anexa o formulário preenchido pelo solicitante à atividade.
+    const initialSteps = form.has_fee
+      ? { fee_form: { ...form.fee, by: profile?.display_name, at: new Date().toISOString() } }
+      : {};
 
     try {
       // 1) Cria a atividade e entra no fluxo de aprovação
@@ -154,7 +161,7 @@ const Atividades: React.FC = () => {
         needs_formiga: form.needs_cantina, // mantém espelho p/ retrocompat
         has_fee: form.has_fee,
         status: initialStatus,
-        steps: {},
+        steps: initialSteps,
         created_by: profile?.id,
         created_by_name: profile?.display_name
       }]).select('id').single();
@@ -174,7 +181,7 @@ const Atividades: React.FC = () => {
       } catch (evErr) { console.warn('Não foi possível criar o evento na agenda', evErr); }
 
       setIsCreateOpen(false);
-      setForm({ name: '', local: '', description: '', start_at: '', end_at: '', needs_cantina: false, has_fee: false });
+      setForm({ name: '', local: '', description: '', start_at: '', end_at: '', needs_cantina: false, has_fee: false, fee: { valores: '', qtd_chefes: '', qtd_interessados: '', obs: '' } });
       fetchActivities();
       alert(
         (!form.needs_cantina && !form.has_fee)
@@ -242,6 +249,13 @@ const Atividades: React.FC = () => {
   // -------- Criador corrige e reenvia uma atividade recusada --------
   const handleResubmit = async (a: any, patch: any) => {
     try {
+      // Mantém o histórico das etapas, mas atualiza/remove o formulário da taxa.
+      const steps = { ...(a.steps || {}) };
+      if (patch.has_fee) {
+        steps.fee_form = { ...(patch.fee || {}), by: profile?.display_name, at: new Date().toISOString() };
+      } else {
+        delete steps.fee_form;
+      }
       const { error } = await supabase.from('activities').update({
         name: patch.name.trim(),
         local: patch.local,
@@ -252,6 +266,7 @@ const Atividades: React.FC = () => {
         needs_formiga: patch.needs_cantina,
         has_fee: patch.has_fee,
         status: stepToStatus(buildOrder(patch.needs_cantina, patch.has_fee)[0]),
+        steps,
         reject_reason: null,
         updated_at: new Date().toISOString()
       }).eq('id', a.id);
@@ -400,6 +415,38 @@ const CreateModal: React.FC<any> = ({ form, setForm, onClose, onSubmit, branch }
             Terá Taxa (Financeiro gera o link de pagamento)
           </label>
         </div>
+
+        {/* Formulário da taxa — aparece só quando "Terá Taxa" */}
+        {form.has_fee && (
+          <div className="p-3 bg-blue-50/50 border border-blue-100 rounded-xl space-y-3">
+            <p className="text-xs font-black uppercase text-blue-700">Formulário da Taxa (para o Financeiro)</p>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Valores *</label>
+              <textarea rows={2} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm"
+                placeholder="Ex.: R$ 50 por chefe, R$ 30 por jovem / interessado"
+                value={form.fee.valores} onChange={(e) => setForm({ ...form, fee: { ...form.fee, valores: e.target.value } })} />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Quantidade de chefes</label>
+                <input type="number" min={0} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm"
+                  value={form.fee.qtd_chefes} onChange={(e) => setForm({ ...form, fee: { ...form.fee, qtd_chefes: e.target.value } })} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Quantidade de interessados</label>
+                <input type="number" min={0} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm"
+                  value={form.fee.qtd_interessados} onChange={(e) => setForm({ ...form, fee: { ...form.fee, qtd_interessados: e.target.value } })} />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Observações (opcional)</label>
+              <textarea rows={2} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm"
+                placeholder="Outras informações para o Financeiro"
+                value={form.fee.obs} onChange={(e) => setForm({ ...form, fee: { ...form.fee, obs: e.target.value } })} />
+            </div>
+          </div>
+        )}
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Descrição completa da atividade</label>
           <textarea rows={4} className="w-full px-4 py-2 border border-gray-200 rounded-lg"
@@ -437,7 +484,13 @@ const DetailModal: React.FC<any> = ({ a, onClose, canAct, isCreator, needsCantin
     name: a.name || '', local: a.local || '', description: a.description || '',
     start_at: a.start_at ? a.start_at.slice(0, 16) : '',
     end_at: a.end_at ? a.end_at.slice(0, 16) : '',
-    needs_cantina: needsCantina, has_fee: !!a.has_fee
+    needs_cantina: needsCantina, has_fee: !!a.has_fee,
+    fee: {
+      valores: a.steps?.fee_form?.valores || '',
+      qtd_chefes: a.steps?.fee_form?.qtd_chefes || '',
+      qtd_interessados: a.steps?.fee_form?.qtd_interessados || '',
+      obs: a.steps?.fee_form?.obs || ''
+    }
   });
 
   const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -473,6 +526,17 @@ const DetailModal: React.FC<any> = ({ a, onClose, canAct, isCreator, needsCantin
             <p><strong>Cantina:</strong> {needsCantina ? 'Sim' : 'Não'} • <strong>Taxa:</strong> {a.has_fee ? 'Sim' : 'Não'}</p>
           </div>
           {a.description && <p className="text-sm text-gray-700 bg-gray-50 p-3 rounded-lg whitespace-pre-wrap">{a.description}</p>}
+
+          {/* Formulário da taxa preenchido pelo solicitante (para o Financeiro) */}
+          {a.has_fee && a.steps?.fee_form && (
+            <div className="p-3 rounded-lg border border-blue-100 bg-blue-50/40 text-sm space-y-1">
+              <p className="text-xs font-black uppercase text-blue-700 mb-1">Formulário da Taxa</p>
+              <p><strong>Valores:</strong> <span className="whitespace-pre-wrap">{a.steps.fee_form.valores || '-'}</span></p>
+              <p><strong>Qtd. de chefes:</strong> {a.steps.fee_form.qtd_chefes || '-'} • <strong>Qtd. de interessados:</strong> {a.steps.fee_form.qtd_interessados || '-'}</p>
+              {a.steps.fee_form.obs && <p><strong>Obs.:</strong> <span className="whitespace-pre-wrap">{a.steps.fee_form.obs}</span></p>}
+            </div>
+          )}
+
           {a.reject_reason && a.status !== 'confirmed' && (
             <p className="text-sm text-red-700 bg-red-50 p-3 rounded-lg"><strong>Motivo da recusa / ajuste:</strong> {a.reject_reason}</p>
           )}
@@ -509,7 +573,7 @@ const DetailModal: React.FC<any> = ({ a, onClose, canAct, isCreator, needsCantin
           {isRejected && isCreator && (
             <div className="p-4 rounded-xl border-2 border-red-200 bg-red-50/40 space-y-3">
               <h3 className="font-bold text-red-800 flex items-center gap-2"><RefreshCw size={16} /> Corrigir e reenviar</h3>
-              <p className="text-xs text-red-700">Ajuste o que foi pedido e reenvie. A atividade volta para o início do fluxo (Diretor de Métodos).</p>
+              <p className="text-xs text-red-700">Ajuste o que foi pedido e reenvie. A atividade volta para o início do fluxo.</p>
               <input type="text" placeholder="Nome" className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm"
                 value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} />
               <input type="text" placeholder="Local" className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm"
@@ -530,6 +594,21 @@ const DetailModal: React.FC<any> = ({ a, onClose, canAct, isCreator, needsCantin
                     onChange={(e) => setEdit({ ...edit, has_fee: e.target.checked })} /> Terá Taxa
                 </label>
               </div>
+              {edit.has_fee && (
+                <div className="p-3 bg-white border border-blue-100 rounded-lg space-y-2">
+                  <p className="text-[11px] font-black uppercase text-blue-700">Formulário da Taxa</p>
+                  <textarea rows={2} placeholder="Valores (ex.: R$ 50 por chefe, R$ 30 por jovem)" className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm"
+                    value={edit.fee.valores} onChange={(e) => setEdit({ ...edit, fee: { ...edit.fee, valores: e.target.value } })} />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <input type="number" min={0} placeholder="Qtd. de chefes" className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm"
+                      value={edit.fee.qtd_chefes} onChange={(e) => setEdit({ ...edit, fee: { ...edit.fee, qtd_chefes: e.target.value } })} />
+                    <input type="number" min={0} placeholder="Qtd. de interessados" className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm"
+                      value={edit.fee.qtd_interessados} onChange={(e) => setEdit({ ...edit, fee: { ...edit.fee, qtd_interessados: e.target.value } })} />
+                  </div>
+                  <textarea rows={2} placeholder="Observações (opcional)" className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm"
+                    value={edit.fee.obs} onChange={(e) => setEdit({ ...edit, fee: { ...edit.fee, obs: e.target.value } })} />
+                </div>
+              )}
               <textarea rows={3} placeholder="Descrição" className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm"
                 value={edit.description} onChange={(e) => setEdit({ ...edit, description: e.target.value })} />
               <button
@@ -537,6 +616,7 @@ const DetailModal: React.FC<any> = ({ a, onClose, canAct, isCreator, needsCantin
                   if (!edit.name.trim()) { alert('Informe o nome.'); return; }
                   if (!edit.start_at || !edit.end_at) { alert('Informe início e término.'); return; }
                   if (edit.end_at < edit.start_at) { alert('O término não pode ser antes do início.'); return; }
+                  if (edit.has_fee && !edit.fee.valores.trim()) { alert('Como a atividade terá taxa, preencha o formulário da taxa (ao menos os valores).'); return; }
                   onResubmit(a, edit);
                 }}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 inline-flex items-center gap-1.5">
