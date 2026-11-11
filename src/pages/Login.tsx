@@ -1,18 +1,21 @@
 import React, { useState } from 'react';
 import { useAuth } from '../AuthContext';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { LogIn, User as UserIcon, Lock, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import Logo from '../components/Logo';
 
 const Login: React.FC = () => {
   const { user, login } = useAuth();
+  const location = useLocation();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  if (user) return <Navigate to="/" />;
+  // Volta para a página que pediu o login (ex.: /maquininha); senão, para o início.
+  const destino = (location.state as { from?: string } | null)?.from;
+  if (user) return <Navigate to={destino && destino !== '/login' ? destino : '/'} replace />;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

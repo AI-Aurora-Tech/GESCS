@@ -20,6 +20,8 @@ import {
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { cn, genRef } from '../lib/utils';
+import { CobrancaMaquininhaModal, SeletorParcelas, useCobrancaMaquininha } from '../components/CobrancaMaquininha';
+import { CobrancaMaquininha, descreverPagamento, metodoDaTela, validarCobranca } from '../lib/maquininha';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useAuth } from '../AuthContext';
@@ -173,12 +175,13 @@ const Cantina: React.FC = () => {
   
   // Cantina / PDV Checkout state variables
   const [cantinaCart, setCantinaCart] = useState<{ id: string; name: string; price: number; quantity: number }[]>([]);
-  const [cantinaTerminalIp, setCantinaTerminalIp] = useState(localStorage.getItem('cantina_terminal_ip') || 'localhost:1337');
   const [cantinaPaymentStatus, setCantinaPaymentStatus] = useState<'idle' | 'sending' | 'waiting' | 'approved' | 'failed'>('idle');
   const [cantinaPaymentError, setCantinaPaymentError] = useState('');
   const [cantinaActivePaymentMethod, setCantinaActivePaymentMethod] = useState<'credit_card' | 'debit_card' | 'pix' | 'cash'>('credit_card');
   const [cantinaCurrentTransactionRef, setCantinaCurrentTransactionRef] = useState('');
-  const [cantinaModalAmount, setCantinaModalAmount] = useState<number>(0);
+  // Parcelamento no crédito (enviado para a maquininha junto com o valor)
+  const [cantinaParcelas, setCantinaParcelas] = useState(1);
+  const [cantinaJurosCliente, setCantinaJurosCliente] = useState(false);
   const [cantinaSearchTerm, setCantinaSearchTerm] = useState('');
 
   const addCantinaCart = (item: any) => {
@@ -208,10 +211,12 @@ const Cantina: React.FC = () => {
     return cantinaCart.reduce((acc, i) => acc + (i.price * i.quantity), 0);
   };
 
-  const completeCantinaSale = async (ref: string, methodStr: string) => {
+  // Registra a venda (estoque + financeiro). Devolve true se gravou.
+  // `detalhePagamento` (ex.: "Débito • Transação 123") vai na descrição.
+  const completeCantinaSale = async (ref: string, methodStr: string, detalhePagamento?: string): Promise<boolean> => {
     if (cantinaCart.length === 0) {
       setCantinaPaymentStatus('approved');
-      return;
+      return true;
     }
     try {
       const totalAmount = getCantinaCartTotal();
@@ -235,8 +240,9 @@ const Cantina: React.FC = () => {
       }
 
       // 2. Insert into `financial_records` inside Supabase
-      const fullDesc = `PDV Cantina: ${itemsText} - Ref #${ref} (${methodStr === 'cash' ? 'Dinheiro' : 'PagBank'})`;
-      await supabase.from('financial_records').insert([{
+      const metodoTexto = methodStr === 'cash' ? 'Dinheiro' : `PagBank${detalhePagamento ? ` ${detalhePagamento}` : ''}`;
+      const fullDesc = `PDV Cantina: ${itemsText} - Ref #${ref} (${metodoTexto})`;
+      const { error: finError } = await supabase.from('financial_records').insert([{
         type: 'income',
         amount: totalAmount,
         category: 'Venda Cantina',
@@ -246,16 +252,27 @@ const Cantina: React.FC = () => {
         date: new Date().toISOString()
       }]);
 
+      if (finError) throw finError;
+
       setCantinaPaymentStatus('approved');
       setCantinaCart([]);
       fetchRecords();
       fetchMaterials();
+      return true;
     } catch (err: any) {
       console.error("Erro ao registrar a conclusão da venda Cantina:", err);
       setCantinaPaymentError(err.message || 'Erro ao persistir a venda.');
       setCantinaPaymentStatus('failed');
+      alert('Erro ao registrar a venda da Cantina: ' + (err?.message || 'Erro inesperado'));
+      return false;
     }
   };
+
+  // Cobrança na maquininha: quando o cliente paga, registra a venda com os dados da transação.
+  const maquininha = useCobrancaMaquininha(async (c: CobrancaMaquininha) => {
+    const transacao = c.codigo_transacao ? ` • Transação ${c.codigo_transacao}` : '';
+    return completeCantinaSale(c.referencia, 'PagBank', `${descreverPagamento(c)}${transacao}`);
+  });
 
   const handleCantinaCheckout = async () => {
     if (cantinaCart.length === 0) return;
@@ -267,63 +284,27 @@ const Cantina: React.FC = () => {
     if (cantinaActivePaymentMethod === 'cash') {
       setCantinaPaymentStatus('sending');
       await completeCantinaSale(reference, 'cash');
-    } else {
-      setCantinaPaymentStatus('sending');
-      try {
-        localStorage.setItem('cantina_terminal_ip', cantinaTerminalIp);
-        setCantinaModalAmount(total);
-        
-        try {
-          await fetch('/api/pagbank/pay', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              amount: total,
-              reference,
-              items: cantinaCart.map(i => ({
-                name: i.name,
-                quantity: i.quantity,
-                price: i.price
-              })),
-              module: 'cantina',
-              paymentMethod: cantinaActivePaymentMethod,
-              terminalIp: cantinaTerminalIp
-            })
-          });
-        } catch (apiError) {
-          console.warn("PagBank cloud registration failed but local Cantina tracking is success:", apiError);
-        }
-
-        setCantinaPaymentStatus('waiting');
-
-        try {
-          fetch(`http://${cantinaTerminalIp}/api/v1/payment`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            mode: 'cors',
-            body: JSON.stringify({
-              amount: Math.round(total * 100),
-              paymentMethod: cantinaActivePaymentMethod === 'debit_card' ? 2 : 1,
-              installments: 1,
-              userReference: reference
-            })
-          }).then(async (localRes) => {
-            const localResult = await localRes.json();
-            if (localResult.success || localResult.status === 'APPROVED') {
-              await completeCantinaSale(reference, 'PagBank');
-            }
-          }).catch(e => {
-            console.warn("Direct native PlugPag connection inactive, falling back to cantina simulator.");
-          });
-        } catch (localErr) {
-          console.warn("Local network dispatch exception:", localErr);
-        }
-      } catch (err: any) {
-        console.error("Erro ao processar PagBank Cantina:", err);
-        setCantinaPaymentStatus('failed');
-        setCantinaPaymentError(err.message || 'Falha ao processar checkout.');
-      }
+      return;
     }
+
+    // Crédito, débito e PIX: manda valor, método e parcelas para a maquininha.
+    // A venda só é registrada quando a maquininha devolver "aprovado".
+    const metodo = metodoDaTela(cantinaActivePaymentMethod)!;
+    const pedido = {
+      valorCentavos: Math.round(total * 100),
+      metodo,
+      parcelas: metodo === 'credito' ? cantinaParcelas : 1,
+    };
+    const invalido = validarCobranca(pedido);
+    if (invalido) { alert(invalido); return; }
+    await maquininha.iniciar({
+      ...pedido,
+      modulo: 'cantina',
+      referencia: reference,
+      descricao: cantinaCart.map(i => `${i.quantity}x ${i.name}`).join(', '),
+      parcelamento: cantinaJurosCliente ? 'comprador' : 'vendedor',
+      criadoPorNome: profile?.display_name,
+    });
   };
   
   const [newIngredient, setNewIngredient] = useState({
@@ -1327,29 +1308,14 @@ const Cantina: React.FC = () => {
                     <span className="text-xl font-black text-gray-900">R$ {getCantinaCartTotal().toFixed(2)}</span>
                   </div>
 
-                  {/* Terminal CONFIG */}
-                  <div className="bg-amber-50/40 border border-amber-100 p-3 rounded-xl space-y-1.5">
-                    <div className="flex justify-between items-center">
-                      <label className="text-[10px] font-black uppercase text-amber-800">IP Moderninha Smart 2 (Cantina)</label>
-                      <span className="text-[9px] text-gray-400">Standard: 1337</span>
-                    </div>
-                    <input
-                      type="text"
-                      className="w-full px-3 py-1.5 bg-white border border-amber-200 rounded-lg text-xs"
-                      placeholder="localhost:1337"
-                      value={cantinaTerminalIp}
-                      onChange={(e) => setCantinaTerminalIp(e.target.value)}
-                    />
-                  </div>
-
                   {/* Payment Mode Selection */}
                   <div>
                     <span className="text-[10px] font-black uppercase text-gray-400 block mb-2">Forma de Pagamento</span>
                     <div className="grid grid-cols-4 gap-2">
                       {[
-                        { id: 'credit_card', label: 'Crédito', sub: 'PagBank' },
-                        { id: 'debit_card', label: 'Débito', sub: 'PagBank' },
-                        { id: 'pix', label: 'Pix QR', sub: 'PagBank' },
+                        { id: 'credit_card', label: 'Crédito', sub: 'Maquininha' },
+                        { id: 'debit_card', label: 'Débito', sub: 'Maquininha' },
+                        { id: 'pix', label: 'Pix', sub: 'Maquininha' },
                         { id: 'cash', label: 'Dinheiro', sub: 'Caixa' }
                       ].map(method => (
                         <button
@@ -1370,10 +1336,27 @@ const Cantina: React.FC = () => {
                     </div>
                   </div>
 
+                  {cantinaActivePaymentMethod === 'credit_card' && (
+                    <SeletorParcelas
+                      totalCentavos={Math.round(getCantinaCartTotal() * 100)}
+                      parcelas={cantinaParcelas}
+                      setParcelas={setCantinaParcelas}
+                      jurosCliente={cantinaJurosCliente}
+                      setJurosCliente={setCantinaJurosCliente}
+                    />
+                  )}
+                  {cantinaActivePaymentMethod !== 'cash' && (
+                    <p className="text-[10px] text-gray-400">
+                      Ao confirmar, o valor vai direto para a maquininha do caixa. O cliente só passa o cartão
+                      {cantinaActivePaymentMethod === 'pix' ? ' (ou lê o QR Code do PIX)' : ''}.
+                    </p>
+                  )}
+
                   {/* Checkout Action CTA */}
                   <button
                     onClick={handleCantinaCheckout}
-                    className="w-full py-3 bg-amber-500 text-white rounded-xl font-bold hover:bg-amber-600 transition-all shadow-lg flex items-center justify-center gap-2"
+                    disabled={maquininha.ativo}
+                    className="disabled:opacity-60 w-full py-3 bg-amber-500 text-white rounded-xl font-bold hover:bg-amber-600 transition-all shadow-lg flex items-center justify-center gap-2"
                   >
                     <CreditCard size={18} /> Processar Venda Cantina (R$ {getCantinaCartTotal().toFixed(2)})
                   </button>
@@ -1382,79 +1365,15 @@ const Cantina: React.FC = () => {
             </div>
           </div>
 
-          {/* Cantina POS Terminal Emulator Overlays */}
-          {cantinaPaymentStatus !== 'idle' && cantinaPaymentStatus !== 'approved' && (
-            <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
-              <div className="bg-white rounded-3xl shadow-2xl border border-gray-100 p-8 max-w-sm w-full text-center relative overflow-hidden">
-                <div className="w-56 h-72 bg-neutral-900 border-4 border-neutral-700 rounded-[2.5rem] p-4 mx-auto shadow-2xl relative flex flex-col justify-between overflow-hidden">
-                  <div className="w-12 h-1 bg-neutral-700 rounded-full mx-auto mb-2" />
-                  
-                  <div className="flex-1 bg-gradient-to-b from-amber-900 to-amber-950 rounded-2xl p-4 text-white flex flex-col justify-between">
-                    <div className="flex justify-between items-center text-[8px] opacity-75 mb-2 border-b border-white/10 pb-1">
-                      <span>CANTINA POS</span>
-                      <span>📶 Wi-Fi</span>
-                    </div>
-                    <p className="text-[10px] font-bold text-center opacity-90 uppercase">Cantina Escoteira</p>
-                    <p className="text-xs opacity-75 text-center mt-1">Ref: {cantinaCurrentTransactionRef}</p>
-                  </div>
-
-                  <div className="text-center my-3 text-white">
-                    <p className="text-xs text-amber-300 font-black uppercase">
-                      {cantinaPaymentStatus === 'sending' ? 'Enviando...' : 'Aguardando Aprovação'}
-                    </p>
-                    <p className="text-lg font-black mt-1">R$ {(cantinaModalAmount || getCantinaCartTotal()).toFixed(2)}</p>
-                  </div>
-
-                  <div className="text-center">
-                    <span className="inline-block px-1.5 py-0.5 rounded text-[8px] font-bold uppercase bg-yellow-400 text-black animate-pulse">
-                      Smart 2 Cantina
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-1.5 mt-3 pt-2 border-t border-neutral-800">
-                    <div className="w-full h-2.5 bg-neutral-800 rounded-sm" />
-                    <div className="w-full h-2.5 bg-neutral-800 rounded-sm" />
-                    <div className="w-full h-2.5 bg-neutral-800 rounded-sm" />
-                  </div>
-                </div>
-
-                <div className="mt-6">
-                  <h4 className="font-bold text-gray-900">Enviado para Moderninha Smart 2</h4>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Processando comanda no terminal IP <strong>{cantinaTerminalIp}</strong>.
-                  </p>
-                </div>
-
-                {/* Simulated Approval Controls */}
-                <div className="mt-6 p-4 bg-amber-50/50 border border-amber-100 rounded-2xl space-y-3">
-                  <p className="text-[10px] font-black text-amber-800 uppercase">Simulador de Maquininha</p>
-                  <p className="text-xs text-gray-600">
-                    Aprove ou cancele a transação de cartão abaixo para simular o recebimento:
-                  </p>
-                  <div className="flex gap-2.5 pt-1.5">
-                    <button
-                      onClick={() => setCantinaPaymentStatus('idle')}
-                      className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 rounded-xl text-xs font-bold text-gray-600"
-                    >
-                      Recusar
-                    </button>
-                    <button
-                      onClick={async () => {
-                        await completeCantinaSale(cantinaCurrentTransactionRef, 'PagBank');
-                      }}
-                      className="flex-1 py-2 bg-amber-500 hover:bg-amber-600 rounded-xl text-xs font-black text-white shadow-lg shadow-amber-200"
-                    >
-                      Aprovar Venda
-                    </button>
-                  </div>
-                </div>
-
-                {cantinaPaymentError && (
-                  <p className="text-xs font-bold text-red-500 mt-3">{cantinaPaymentError}</p>
-                )}
-              </div>
-            </div>
-          )}
+          {/* Cobrança na maquininha (Moderninha Smart 2) */}
+          <CobrancaMaquininhaModal
+            maq={maquininha}
+            valorCentavos={Math.round(getCantinaCartTotal() * 100)}
+            aoRegistrarManual={() => {
+              const ref = maquininha.cobranca?.referencia || cantinaCurrentTransactionRef || genRef('CT');
+              completeCantinaSale(ref, 'PagBank', '(registro manual)');
+            }}
+          />
         </div>
       )}
 

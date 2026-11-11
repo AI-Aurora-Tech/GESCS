@@ -237,7 +237,8 @@ async function startServer() {
   });
 
   // PAGBANK / PAGSEGURO INTEGRATION FOR MODERNINHA SMART 2
-  const PAGBANK_TOKEN = process.env.PAGBANK_TOKEN || "2e9d25ac-2dc9-437d-b6a4-011cfa9c55d3701536b84e0dae7ef77f387bcd4255b8affc-b1c2-4991-969e-d87f214998ee";
+  // O token fica SÓ na variável de ambiente PAGBANK_TOKEN (nunca no código).
+  const PAGBANK_TOKEN = process.env.PAGBANK_TOKEN || "";
 
   // Simulate or create a PagBank Order
   app.post("/api/pagbank/pay", async (req, res) => {
