@@ -34,6 +34,8 @@ import { supabase } from '../supabase';
 import { useAuth } from '../AuthContext';
 import Barcode from 'react-barcode';
 import { cn, genRef } from '../lib/utils';
+import { CobrancaMaquininhaModal, SeletorParcelas, useCobrancaMaquininha } from '../components/CobrancaMaquininha';
+import { CobrancaMaquininha, descreverPagamento, metodoDaTela, validarCobranca } from '../lib/maquininha';
 import { format } from 'date-fns';
 import Logo from '../components/Logo';
 import Users from './Users';
@@ -141,14 +143,15 @@ const Lojinha: React.FC = () => {
 
   // PagBank / PDV Checkout states
   const [cart, setCart] = useState<{ product: Product; quantity: number }[]>([]);
-  const [terminalIp, setTerminalIp] = useState(localStorage.getItem('terminal_ip') || 'localhost:1337');
   const [paymentStatus, setPaymentStatus] = useState<'idle' | 'sending' | 'waiting' | 'approved' | 'failed'>('idle');
   const [paymentError, setPaymentError] = useState('');
   const [activePdvTab, setActivePdvTab] = useState<'venda' | 'fiados' | 'movimentacao' | 'historico'>('venda');
   const [posSearchTerm, setPosSearchTerm] = useState('');
   const [pagBankSales, setPagBankSales] = useState<any[]>([]);
   const [currentTransactionRef, setCurrentTransactionRef] = useState('');
-  const [pdvModalAmount, setPdvModalAmount] = useState<number>(0);
+  // Parcelamento no crédito (enviado para a maquininha junto com o valor)
+  const [parcelas, setParcelas] = useState(1);
+  const [jurosCliente, setJurosCliente] = useState(false);
   const [activePaymentMethod, setActivePaymentMethod] = useState<'credit_card' | 'debit_card' | 'pix' | 'cash'>('credit_card');
   // Trava contra cliques repetidos (evita registrar a mesma venda várias vezes)
   const savingSaleRef = useRef(false);
@@ -251,17 +254,20 @@ const Lojinha: React.FC = () => {
     return cart.reduce((acc, item) => acc + (item.product.sale_price || item.product.price || 0) * item.quantity, 0);
   };
 
-  const completePdvSale = async (ref: string, methodStr: string) => {
+  // Registra a venda (estoque + financeiro). Devolve true se gravou tudo.
+  // `detalhePagamento` (ex.: "Crédito 3x • Transação 123") vai na descrição da venda.
+  const completePdvSale = async (ref: string, methodStr: string, detalhePagamento?: string): Promise<boolean> => {
     if (cart.length === 0) {
       setPaymentStatus('approved');
-      return;
+      return true;
     }
     // Trava anti-duplicidade: se já está salvando uma venda, ignora cliques extras.
-    if (savingSaleRef.current) return;
+    if (savingSaleRef.current) return false;
     savingSaleRef.current = true;
     setSavingSale(true);
     try {
-      const methodLabel = methodStr === 'cash' ? 'Dinheiro' : methodStr === 'pix' ? 'PIX' : methodStr === 'none' ? '' : 'PagBank';
+      const baseLabel = methodStr === 'cash' ? 'Dinheiro' : methodStr === 'pix' ? 'PIX' : methodStr === 'none' ? '' : 'PagBank';
+      const methodLabel = detalhePagamento ? `${baseLabel} ${detalhePagamento}` : baseLabel;
       const itemsText = cart.map(i => `${i.quantity}x ${i.product.name}`).join(', ');
       const totalAmount = getCartTotal();
       const currentSaleType = saleType;
@@ -431,16 +437,24 @@ const Lojinha: React.FC = () => {
       } else {
         alert(`✅ VENDA CONFIRMADA!\n\nRef ${ref}${methodLabel ? ` • ${methodLabel}` : ''} • Total R$ ${totalAmount.toFixed(2)}\n\nNão é preciso clicar de novo.`);
       }
+      return true;
     } catch (err: any) {
       console.error("Erro ao registrar a conclusão da venda:", err);
       setPaymentError(err.message || 'Erro ao persistir a venda.');
       setPaymentStatus('failed');
       alert('Erro ao registrar a venda: ' + (err?.message || 'Erro inesperado') + '\n\nSe a mensagem falar em permissão/policy (RLS), rode o script SQL de permissões no Supabase.');
+      return false;
     } finally {
       savingSaleRef.current = false;
       setSavingSale(false);
     }
   };
+
+  // Cobrança na maquininha: quando o cliente paga, registra a venda com os dados da transação.
+  const maquininha = useCobrancaMaquininha(async (c: CobrancaMaquininha) => {
+    const transacao = c.codigo_transacao ? ` • Transação ${c.codigo_transacao}` : '';
+    return completePdvSale(c.referencia, 'PagBank', `${descreverPagamento(c)}${transacao}`);
+  });
 
   // Extrai o "Ref" (ex.: LJ-121025-134530-A1B2) das observações — usado só para rotular.
   const parseSaleRef = (notes?: string): string | null => {
@@ -543,71 +557,31 @@ const Lojinha: React.FC = () => {
       return;
     }
 
-    // Dinheiro e PIX registram a venda na hora (o PIX é confirmado na maquininha/QR
-    // antes de clicar) — assim a venda SEMPRE aparece nas movimentações.
-    if (activePaymentMethod === 'cash' || activePaymentMethod === 'pix') {
+    // Dinheiro registra a venda na hora.
+    if (activePaymentMethod === 'cash') {
       setPaymentStatus('sending');
-      await completePdvSale(reference, activePaymentMethod);
-    } else {
-      setPaymentStatus('sending');
-      try {
-        localStorage.setItem('terminal_ip', terminalIp);
-        setPdvModalAmount(total);
-
-        // Attempt cloud pre-request to PagBank
-        try {
-          await fetch('/api/pagbank/pay', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              amount: total,
-              reference,
-              items: cart.map(i => ({
-                name: i.product.name,
-                quantity: i.quantity,
-                price: i.product.sale_price || i.product.price || 0
-              })),
-              module: 'lojinha',
-              paymentMethod: activePaymentMethod,
-              terminalIp
-            })
-          });
-        } catch (apiError) {
-          console.warn("PagBank cloud registrar failed but local checkout remains active:", apiError);
-        }
-
-        // Toggle wait status for local terminal approval or simulation fallback
-        setPaymentStatus('waiting');
-        
-        // Non-blocking trigger local API of terminal (PlugPag local protocol)
-        try {
-          fetch(`http://${terminalIp}/api/v1/payment`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            mode: 'cors',
-            body: JSON.stringify({
-              amount: Math.round(total * 100),
-              paymentMethod: activePaymentMethod === 'debit_card' ? 2 : 1,
-              installments: 1,
-              userReference: reference
-            })
-          }).then(async (localRes) => {
-            const localResult = await localRes.json();
-            if (localResult.success || localResult.status === 'APPROVED') {
-              await completePdvSale(reference, 'PagBank');
-            }
-          }).catch(err => {
-            console.warn("Direct native HTTP PlugPag connection inactive, falling back to local emulator overlay.");
-          });
-        } catch (localErr) {
-          console.warn("Local terminal dispatch failed, displaying safe emulation helper:", localErr);
-        }
-      } catch (err: any) {
-        console.error("Erro na comunicação PagBank:", err);
-        setPaymentStatus('failed');
-        setPaymentError(err.message || 'Falha ao processar checkout.');
-      }
+      await completePdvSale(reference, 'cash');
+      return;
     }
+
+    // Crédito, débito e PIX: manda valor, método e parcelas para a maquininha.
+    // A venda só é registrada quando a maquininha devolver "aprovado".
+    const metodo = metodoDaTela(activePaymentMethod)!;
+    const pedido = {
+      valorCentavos: Math.round(total * 100),
+      metodo,
+      parcelas: metodo === 'credito' ? parcelas : 1,
+    };
+    const invalido = validarCobranca(pedido);
+    if (invalido) { alert(invalido); return; }
+    await maquininha.iniciar({
+      ...pedido,
+      modulo: 'lojinha',
+      referencia: reference,
+      descricao: cart.map(i => `${i.quantity}x ${i.product.name}${i.product.size ? ` (${i.product.size})` : ''}`).join(', '),
+      parcelamento: jurosCliente ? 'comprador' : 'vendedor',
+      criadoPorNome: profile?.display_name,
+    });
   };
 
   const handleMarkFiadoPaid = async (sale: any) => {
@@ -2530,27 +2504,13 @@ const Lojinha: React.FC = () => {
                     {/* Maquininha + Forma de Pagamento (apenas venda normal) */}
                     {saleType === 'normal' && (
                       <>
-                        <div className="bg-blue-50/30 border border-blue-100 p-3 rounded-xl space-y-1.5">
-                          <div className="flex justify-between items-center">
-                            <label className="text-[10px] font-black uppercase text-blue-700">IP da Moderninha Smart 2</label>
-                            <span className="text-[9px] text-gray-400 font-mono">PlugPag Port: 1337</span>
-                          </div>
-                          <input
-                            type="text"
-                            className="w-full px-3 py-1.5 bg-white border border-blue-200 rounded-lg text-xs"
-                            placeholder="Ex: localhost:1337 ou 192.168.1.150:1337"
-                            value={terminalIp}
-                            onChange={(e) => setTerminalIp(e.target.value)}
-                          />
-                        </div>
-
                         <div>
                           <span className="text-[10px] font-black uppercase text-gray-400 block mb-2">Forma de Pagamento</span>
                           <div className="grid grid-cols-4 gap-2">
                             {[
-                              { id: 'credit_card', label: 'Crédito', sub: 'PagBank' },
-                              { id: 'debit_card', label: 'Débito', sub: 'PagBank' },
-                              { id: 'pix', label: 'Pix QR', sub: 'PagBank' },
+                              { id: 'credit_card', label: 'Crédito', sub: 'Maquininha' },
+                              { id: 'debit_card', label: 'Débito', sub: 'Maquininha' },
+                              { id: 'pix', label: 'Pix', sub: 'Maquininha' },
                               { id: 'cash', label: 'Dinheiro', sub: 'Caixa' }
                             ].map(method => (
                               <button
@@ -2570,13 +2530,29 @@ const Lojinha: React.FC = () => {
                             ))}
                           </div>
                         </div>
+
+                        {activePaymentMethod === 'credit_card' && (
+                          <SeletorParcelas
+                            totalCentavos={Math.round(getCartTotal() * 100)}
+                            parcelas={parcelas}
+                            setParcelas={setParcelas}
+                            jurosCliente={jurosCliente}
+                            setJurosCliente={setJurosCliente}
+                          />
+                        )}
+                        {activePaymentMethod !== 'cash' && (
+                          <p className="text-[10px] text-gray-400">
+                            Ao confirmar, o valor vai direto para a maquininha do caixa. O cliente só passa o cartão
+                            {activePaymentMethod === 'pix' ? ' (ou lê o QR Code do PIX)' : ''}.
+                          </p>
+                        )}
                       </>
                     )}
 
                     {/* Checkout CTA */}
                     <button
                       onClick={handlePdvCheckout}
-                      disabled={savingSale || cart.length === 0}
+                      disabled={savingSale || maquininha.ativo || cart.length === 0}
                       className={cn(
                         "w-full py-3 text-white rounded-xl font-bold transition-all shadow-lg flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed",
                         saleType === 'donation' ? "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200" :
@@ -2865,87 +2841,15 @@ const Lojinha: React.FC = () => {
             </div>
           )}
 
-          {/* Payment Terminal Emulator / Modal Overlay */}
-          {saleType === 'normal' && paymentStatus !== 'idle' && paymentStatus !== 'approved' && (
-            <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
-              <div className="bg-white rounded-3xl shadow-2xl border border-gray-100 p-8 max-w-sm w-full text-center relative overflow-hidden">
-                {/* Simulated Moderninha Terminal Display */}
-                <div className="w-56 h-72 bg-neutral-900 border-4 border-neutral-700 rounded-[2.5rem] p-4 mx-auto shadow-2xl relative flex flex-col justify-between overflow-hidden">
-                  {/* Speaker Grill */}
-                  <div className="w-12 h-1 bg-neutral-700 rounded-full mx-auto mb-2" />
-                  
-                  {/* High Contrast Color POS Screen */}
-                  <div className="flex-1 bg-gradient-to-b from-blue-900 to-indigo-950 rounded-2xl p-4 text-white flex flex-col justify-between">
-                    <div>
-                      <div className="flex justify-between items-center text-[8px] opacity-75 mb-2 border-b border-white/10 pb-1">
-                        <span>PAGBANK POS</span>
-                        <span>📶 4G</span>
-                      </div>
-                      <p className="text-[10px] font-bold text-center opacity-90 uppercase">Cobrança Escoteira</p>
-                      <p className="text-xs opacity-75 text-center mt-1">Ref: {currentTransactionRef}</p>
-                    </div>
-
-                    <div className="text-center my-3">
-                      <p className="text-xs text-cyan-300 font-black uppercase">
-                        {paymentStatus === 'sending' ? 'Processando...' : 'Aprovação manual'}
-                      </p>
-                      <p className="text-lg font-black mt-1">R$ {(pdvModalAmount || getCartTotal()).toFixed(2)}</p>
-                    </div>
-
-                    <div className="text-center">
-                      <span className="inline-block px-1.5 py-0.5 rounded text-[8px] font-bold uppercase bg-yellow-400 text-black animate-pulse">
-                        Sua Moderninha
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Machine Keyboard Buttons */}
-                  <div className="grid grid-cols-3 gap-1.5 mt-3 pt-2 border-t border-neutral-800">
-                    <div className="w-full h-2.5 bg-neutral-800 rounded-sm" />
-                    <div className="w-full h-2.5 bg-neutral-800 rounded-sm" />
-                    <div className="w-full h-2.5 bg-neutral-800 rounded-sm" />
-                  </div>
-                </div>
-
-                {/* Local Network Info */}
-                <div className="mt-6">
-                  <h4 className="font-bold text-gray-900">Processando Pagamento</h4>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Enviamos um sinal na rede local via PlugPag para a máquina no endereço <strong>{terminalIp}</strong>.
-                  </p>
-                </div>
-
-                {/* Simulated Approval Buttons Overlay */}
-                <div className="mt-6 p-4 bg-gray-50 border border-gray-100 rounded-2xl space-y-3">
-                  <p className="text-[10px] font-black text-gray-400 uppercase">Simulador Moderninha Smart 2</p>
-                  <p className="text-xs text-gray-600">
-                    Como a maquina real precisa de rede fisica local, você pode clicar abaixo para simular a resposta imediata:
-                  </p>
-                  <div className="flex gap-2.5 pt-1.5">
-                    <button
-                      onClick={() => setPaymentStatus('idle')}
-                      className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 rounded-xl text-xs font-bold text-gray-600"
-                    >
-                      Recusar
-                    </button>
-                    <button
-                      disabled={savingSale}
-                      onClick={async () => {
-                        await completePdvSale(currentTransactionRef, 'PagBank');
-                      }}
-                      className="flex-1 py-2 bg-green-500 hover:bg-green-600 disabled:opacity-60 disabled:cursor-not-allowed rounded-xl text-xs font-black text-white shadow-lg shadow-green-200"
-                    >
-                      {savingSale ? 'Registrando...' : 'Aprovar Venda'}
-                    </button>
-                  </div>
-                </div>
-
-                {paymentError && (
-                  <p className="text-xs font-bold text-red-500 mt-3">{paymentError}</p>
-                )}
-              </div>
-            </div>
-          )}
+          {/* Cobrança na maquininha (Moderninha Smart 2) */}
+          <CobrancaMaquininhaModal
+            maq={maquininha}
+            valorCentavos={Math.round(getCartTotal() * 100)}
+            aoRegistrarManual={() => {
+              const ref = maquininha.cobranca?.referencia || currentTransactionRef || genRef('LJ');
+              completePdvSale(ref, 'PagBank', '(registro manual)');
+            }}
+          />
         </div>
       )}
 

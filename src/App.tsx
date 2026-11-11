@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth, getRoles } from './AuthContext';
 import Layout from './components/Layout';
 import Lojinha from './pages/Lojinha';
@@ -13,14 +13,17 @@ import Login from './pages/Login';
 import Users from './pages/Users';
 import Agenda from './pages/Agenda';
 import Atividades from './pages/Atividades';
+import Maquininha from './pages/Maquininha';
 
 import ForcePasswordChange from './components/ForcePasswordChange';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode, allowedRoles?: string[] }> = ({ children, allowedRoles }) => {
   const { user, profile, loading } = useAuth();
+  const location = useLocation();
   
   if (loading) return <div className="flex items-center justify-center h-screen">Carregando...</div>;
-  if (!user) return <Navigate to="/login" />;
+  // Guarda a página de origem para voltar a ela depois do login (ex.: /maquininha).
+  if (!user) return <Navigate to="/login" state={{ from: location.pathname }} />;
   if (profile?.requires_password_change) return <ForcePasswordChange />;
   
   if (allowedRoles && profile) {
@@ -42,6 +45,12 @@ const App: React.FC = () => {
       <Router>
         <Routes>
           <Route path="/login" element={<Login />} />
+          {/* Tela cheia, aberta DENTRO da maquininha pelo app "Lojinha GESCS" (repo lojinha-pos). */}
+          <Route path="/maquininha" element={
+            <ProtectedRoute allowedRoles={['lojinha', 'cantina', 'financeiro', 'admin_']}>
+              <Maquininha />
+            </ProtectedRoute>
+          } />
           <Route path="/" element={
             <ProtectedRoute>
               <Layout />
