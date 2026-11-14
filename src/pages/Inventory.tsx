@@ -33,7 +33,22 @@ interface Asset {
   branch: 'Filhote' | 'Lobinho' | 'Escoteiro' | 'Senior' | 'Pioneiro' | 'Grupo Geral' | 'Grupo';
   date_acquired: string;
   date_disposed?: string;
+  photos?: string[];
+  conservation_state?: string;
+  replacement_months?: number | null;
+  category?: string;
 }
+
+const ASSET_CATEGORIES = [
+  'Ferramentas',
+  'Material para amarra',
+  'Material para atividade',
+  'Equipamento',
+  'Cozinha / Campo',
+  'Mobiliário',
+  'Outros',
+];
+const CONSERVATION_STATES = ['Novo', 'Bom', 'Regular', 'Ruim', 'Inservível'];
 
 const Inventory: React.FC = () => {
   const { user, profile, loading: authLoading } = useAuth();
@@ -57,9 +72,56 @@ const Inventory: React.FC = () => {
     description: '',
     value: 0,
     branch: 'Grupo Geral' as Asset['branch'],
-    type: 'Equipamento',
+    category: 'Ferramentas',
+    conservation_state: 'Bom',
+    replacement_months: '',
+    photos: [] as string[],
     status: 'Novo' as Asset['status']
   });
+  const [viewingPhotos, setViewingPhotos] = useState<string[] | null>(null);
+  const [uploadingPhotos, setUploadingPhotos] = useState(false);
+
+  // Redimensiona a foto (máx. 1000px) e devolve base64 JPEG — mantém o banco leve.
+  const fileToResizedDataUrl = (file: File): Promise<string> => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX = 1000;
+        let { width, height } = img;
+        if (width > height && width > MAX) { height = Math.round(height * MAX / width); width = MAX; }
+        else if (height > MAX) { width = Math.round(width * MAX / height); height = MAX; }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) { resolve(reader.result as string); return; }
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.7));
+      };
+      img.onerror = reject;
+      img.src = reader.result as string;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+
+  const handlePhotoFiles = async (files: FileList | null) => {
+    if (!files || !files.length) return;
+    setUploadingPhotos(true);
+    try {
+      const urls: string[] = [];
+      for (const f of Array.from(files)) {
+        if (!f.type.startsWith('image/')) continue;
+        urls.push(await fileToResizedDataUrl(f));
+      }
+      setNewAsset(prev => ({ ...prev, photos: [...prev.photos, ...urls].slice(0, 6) }));
+    } catch (err) {
+      console.error('Erro ao processar fotos', err);
+      alert('Não foi possível processar uma das fotos.');
+    } finally {
+      setUploadingPhotos(false);
+    }
+  };
 
   const generateBarcode = () => {
     return Math.floor(1000000000000 + Math.random() * 9000000000000).toString();
@@ -101,31 +163,39 @@ const Inventory: React.FC = () => {
     e.preventDefault();
     try {
       const barcode = newAsset.barcode || generateBarcode();
-      const formattedDescription = `[Tipo: ${newAsset.type}] ${newAsset.description}`;
       const assetValue = parseFloat(assetValueStr.replace(/\./g, '').replace(',', '.')) || 0;
+      const months = parseInt(newAsset.replacement_months, 10);
       const payload = {
         name: newAsset.name,
         barcode,
-        description: formattedDescription,
+        description: newAsset.description,
         value: assetValue,
         branch: isChefiaScoped ? (profile?.branch as any) : newAsset.branch,
-        status: isChefiaScoped ? 'pending_approval' : newAsset.status,
+        category: newAsset.category,
+        conservation_state: newAsset.conservation_state,
+        replacement_months: Number.isFinite(months) ? months : null,
+        photos: newAsset.photos,
+        // Ativo entra como ativo; chefe cria como pendente de aprovação.
+        status: isChefiaScoped ? 'pending_approval' : 'active',
         date_acquired: new Date().toISOString().slice(0, 10)
       };
 
       const { error } = await supabase.from('assets').insert([payload]);
       if (error) throw error;
-      
+
       setIsModalOpen(false);
       setAssetValueStr('');
-      setNewAsset({ 
-        name: '', 
-        barcode: '', 
-        description: '', 
-        value: 0, 
-        branch: 'Grupo Geral', 
-        type: 'Equipamento', 
-        status: 'Novo' 
+      setNewAsset({
+        name: '',
+        barcode: '',
+        description: '',
+        value: 0,
+        branch: 'Grupo Geral',
+        category: 'Ferramentas',
+        conservation_state: 'Bom',
+        replacement_months: '',
+        photos: [],
+        status: 'Novo'
       });
       fetchAssets();
     } catch (err: any) {
@@ -321,28 +391,50 @@ const Inventory: React.FC = () => {
                     <p className="text-sm font-bold text-gray-900">R$ {asset.value.toFixed(2)}</p>
                   </div>
                   {(() => {
-                    const typeMatch = asset.description.match(/^\[Tipo:\s*([^\]]+)\]/);
-                    const displayType = typeMatch ? typeMatch[1] : 'Equipamento';
-                    const displayDescription = asset.description.replace(/^\[Tipo:\s*([^\]]+)\]\s*/, '');
+                    const typeMatch = asset.description?.match(/^\[Tipo:\s*([^\]]+)\]/);
+                    const displayCategory = asset.category || (typeMatch ? typeMatch[1] : 'Sem categoria');
+                    const displayDescription = (asset.description || '').replace(/^\[Tipo:\s*([^\]]+)\]\s*/, '');
+                    const photos = asset.photos || [];
                     return (
                       <>
+                        {photos.length > 0 && (
+                          <button type="button" onClick={() => setViewingPhotos(photos)}
+                            className="relative w-full h-28 mb-3 rounded-lg overflow-hidden bg-gray-100 border border-gray-100">
+                            <img src={photos[0]} alt={asset.name} className="w-full h-full object-cover" />
+                            {photos.length > 1 && (
+                              <span className="absolute bottom-1 right-1 bg-black/60 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
+                                +{photos.length - 1} foto(s)
+                              </span>
+                            )}
+                          </button>
+                        )}
                         <div className="flex gap-1.5 flex-wrap mb-2">
                           <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-600 text-[10px] font-bold uppercase">
-                            {displayType}
+                            {displayCategory}
                           </span>
                           <span className="px-2 py-0.5 rounded bg-purple-50 text-purple-600 text-[10px] font-bold uppercase">
                             Ramo: {asset.branch}
                           </span>
+                          {asset.conservation_state && (
+                            <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-700 text-[10px] font-bold uppercase">
+                              {asset.conservation_state}
+                            </span>
+                          )}
                         </div>
                         <h3 className="text-lg font-bold text-gray-900 mb-1">{asset.name}</h3>
-                        <p className="text-sm text-gray-500 mb-4 line-clamp-2">{displayDescription}</p>
+                        {displayDescription && <p className="text-sm text-gray-500 mb-2 line-clamp-2">{displayDescription}</p>}
                       </>
                     );
                   })()}
-                  
-                  <div className="flex items-center text-xs text-gray-400">
-                    <Clock size={14} className="mr-1" />
-                    Adquirido em: {asset.date_acquired ? format(new Date(asset.date_acquired), 'dd/MM/yyyy', { locale: ptBR }) : '-'}
+
+                  <div className="flex flex-col gap-1 text-xs text-gray-400">
+                    <div className="flex items-center">
+                      <Clock size={14} className="mr-1" />
+                      Adquirido em: {asset.date_acquired ? format(new Date(asset.date_acquired), 'dd/MM/yyyy', { locale: ptBR }) : '-'}
+                    </div>
+                    {asset.replacement_months ? (
+                      <div>Previsão de troca: {asset.replacement_months} {asset.replacement_months === 1 ? 'mês' : 'meses'}</div>
+                    ) : null}
                   </div>
                 </div>
 
@@ -587,9 +679,20 @@ const Inventory: React.FC = () => {
         </div>
       )}
 
+      {viewingPhotos && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[60] p-4" onClick={() => setViewingPhotos(null)}>
+          <button className="absolute top-4 right-4 text-white text-3xl leading-none" onClick={() => setViewingPhotos(null)}>×</button>
+          <div className="max-w-3xl w-full max-h-[90vh] overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-3" onClick={(e) => e.stopPropagation()}>
+            {viewingPhotos.map((p, i) => (
+              <img key={i} src={p} alt="" className="w-full rounded-xl bg-white" />
+            ))}
+          </div>
+        </div>
+      )}
+
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8 animate-in fade-in duration-200 max-h-[92vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-6">Cadastrar Novo Ativo</h2>
             <form onSubmit={handleAddAsset} className="space-y-4">
               <div>
@@ -622,39 +725,47 @@ const Inventory: React.FC = () => {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Ativo</label>
-                  <select 
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Categoria</label>
+                  <select
                     required
                     className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                    value={newAsset.type}
-                    onChange={(e) => setNewAsset({...newAsset, type: e.target.value})}
+                    value={newAsset.category}
+                    onChange={(e) => setNewAsset({...newAsset, category: e.target.value})}
                   >
-                    <option value="Equipamento">Equipamento</option>
-                    <option value="Consumível">Consumível</option>
-                    <option value="Mobiliário">Mobiliário</option>
-                    <option value="Outro">Outro</option>
+                    {ASSET_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Status do Ativo</label>
-                  <select 
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Estado de conservação</label>
+                  <select
                     required
                     className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                    value={newAsset.status}
-                    onChange={(e) => setNewAsset({...newAsset, status: e.target.value as any})}
+                    value={newAsset.conservation_state}
+                    onChange={(e) => setNewAsset({...newAsset, conservation_state: e.target.value})}
                   >
-                    <option value="Novo">Novo</option>
-                    <option value="Usado">Usado</option>
-                    <option value="Muito Usado">Muito Usado</option>
-                    <option value="Descartar">Descartar</option>
+                    {CONSERVATION_STATES.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
                 <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Previsão de troca (meses)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    placeholder="Ex: 24"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    value={newAsset.replacement_months}
+                    onChange={(e) => setNewAsset({...newAsset, replacement_months: e.target.value})}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Valor Estimado (R$)</label>
-                  <input 
+                  <input
                     type="text"
                     placeholder="0,00"
                     className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm"
@@ -666,12 +777,21 @@ const Inventory: React.FC = () => {
                     }}
                   />
                 </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Cód. Barras (Opcional)</label>
+                  <input
+                    type="text"
+                    placeholder="Automático se vazio"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    value={newAsset.barcode}
+                    onChange={(e) => setNewAsset({...newAsset, barcode: e.target.value})}
+                  />
+                </div>
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Descrição / Especificação</label>
-                <textarea 
-                  required
+                <textarea
                   rows={2}
                   placeholder="Especificações, marca, modelo, etc..."
                   className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
@@ -680,15 +800,27 @@ const Inventory: React.FC = () => {
                 />
               </div>
 
+              {/* Fotos do item */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Cód. Barras (Opcional)</label>
-                <input 
-                  type="text"
-                  placeholder="Gerado automaticamente se vazio"
-                  className="w-full px-4 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
-                  value={newAsset.barcode}
-                  onChange={(e) => setNewAsset({...newAsset, barcode: e.target.value})}
-                />
+                <label className="block text-sm font-medium text-gray-700 mb-1">Fotos do item (até 6)</label>
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {newAsset.photos.map((p, i) => (
+                    <div key={i} className="relative w-16 h-16 rounded-lg overflow-hidden border border-gray-200">
+                      <img src={p} alt="" className="w-full h-full object-cover" />
+                      <button type="button"
+                        onClick={() => setNewAsset(prev => ({ ...prev, photos: prev.photos.filter((_, idx) => idx !== i) }))}
+                        className="absolute top-0 right-0 bg-red-600 text-white w-5 h-5 text-xs leading-none rounded-bl-lg">×</button>
+                    </div>
+                  ))}
+                  {newAsset.photos.length < 6 && (
+                    <label className="w-16 h-16 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center cursor-pointer text-gray-400 hover:border-blue-400 hover:text-blue-500">
+                      {uploadingPhotos ? <span className="text-[10px]">...</span> : <Plus size={20} />}
+                      <input type="file" accept="image/*" multiple capture="environment" className="hidden"
+                        onChange={(e) => { handlePhotoFiles(e.target.files); e.target.value = ''; }} />
+                    </label>
+                  )}
+                </div>
+                <p className="text-[11px] text-gray-400">Pode tirar a foto na hora ou anexar da galeria. As imagens são reduzidas automaticamente.</p>
               </div>
 
               <div className="flex gap-3 pt-4">

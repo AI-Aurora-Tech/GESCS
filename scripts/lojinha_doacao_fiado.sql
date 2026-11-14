@@ -454,3 +454,14 @@ UPDATE public.activities SET status = 'pending_presidencia' WHERE status = 'pend
 -- Status novos possíveis:
 --   pending_metodos | pending_financeiro | pending_cantina |
 --   pending_presidencia | pending_arte | pending_revisao | confirmed | rejected
+
+
+-- ============================================================================
+-- PARTE 11 — Ativos: fotos, estado de conservação, previsão de troca e categoria
+-- ============================================================================
+-- Idempotente. Adiciona os campos novos do cadastro de ativos.
+ALTER TABLE public.assets
+  ADD COLUMN IF NOT EXISTS photos             text[]  NOT NULL DEFAULT '{}',  -- fotos do item (base64)
+  ADD COLUMN IF NOT EXISTS conservation_state text,                            -- Novo | Bom | Regular | Ruim | Inservível
+  ADD COLUMN IF NOT EXISTS replacement_months integer,                         -- previsão de troca (em meses)
+  ADD COLUMN IF NOT EXISTS category           text;                            -- Ferramentas | Material para amarra | ...
