@@ -1033,7 +1033,7 @@ const Lojinha: React.FC = () => {
       .order('created_at', { ascending: false });
     if (special) setSpecialSales(special);
 
-    // Conferências de estoque (para o alerta de 15 dias). Tabela pode não existir ainda.
+    // Conferências de estoque (para o alerta de 30 dias). Tabela pode não existir ainda.
     const { data: checks } = await supabase
       .from('lojinha_stock_checks')
       .select('*')
@@ -1453,12 +1453,12 @@ const Lojinha: React.FC = () => {
     .reduce((acc, s) => acc + Number(s.total_amount || 0), 0);
   const pendingDonationRequests = donationRequests.filter(r => r.status === 'pending');
 
-  // Conferência de estoque: obrigatória a cada 15 dias
+  // Conferência de estoque: obrigatória a cada 30 dias
   const lastStockCheck = stockChecks[0];
   const daysSinceCheck = lastStockCheck?.created_at
     ? Math.floor((Date.now() - new Date(lastStockCheck.created_at).getTime()) / (1000 * 60 * 60 * 24))
     : null;
-  const showStockCheckAlert = daysSinceCheck === null || daysSinceCheck >= 15;
+  const showStockCheckAlert = daysSinceCheck === null || daysSinceCheck >= 30;
 
   return (
     <>
@@ -1669,8 +1669,8 @@ const Lojinha: React.FC = () => {
               <h3 className="font-bold">Conferência de estoque pendente</h3>
               <p className="text-sm text-blue-600">
                 {daysSinceCheck === null
-                  ? 'Nenhuma conferência registrada ainda. A conferência do estoque deve ser feita a cada 15 dias.'
-                  : `A última conferência foi há ${daysSinceCheck} dias. É necessário realizar a conferência do estoque (a cada 15 dias).`}
+                  ? 'Nenhuma conferência registrada ainda. A conferência do estoque deve ser feita a cada 30 dias.'
+                  : `A última conferência foi há ${daysSinceCheck} dias. É necessário realizar a conferência do estoque (a cada 30 dias).`}
               </p>
             </div>
             <button
